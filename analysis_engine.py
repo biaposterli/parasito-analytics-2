@@ -259,6 +259,21 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
             "tem_patogenico": any(e in PATOGENICOS for e in especies_total),
             "tem_comensal": any(e in COMENSAIS for e in especies_total),
         })
+    if not rows:
+        # planilha sem nenhuma linha de dado válido (ou sem id_paciente preenchido):
+        # devolve DataFrame vazio mas com as colunas certas, para não quebrar o
+        # restante do pipeline (compute_metrics acessa essas colunas diretamente).
+        return pd.DataFrame(columns=[
+            "id_paciente", "nome_crianca", "n_coletas_registradas",
+            "n_coletas_pote_entregue", "n_coletas_lamina_entregue", "categoria_amostragem",
+            "participou_estudo", "fecal_status", "lamina_status", "positivo_fecal",
+            "positivo_lamina", "positivo_algum_metodo", "especies_fecais", "especies_fecais_str",
+            "especies_lamina", "especies_lamina_str", "especies", "especies_str",
+            "n_especies_distintas_fecais", "poliparasitado_fecal",
+            "positivo_Graham", "positivo_Baermann-Picanço", "positivo_HPJ", "positivo_Willis",
+            "status_Graham", "status_Baermann-Picanço", "status_HPJ", "status_Willis",
+            "tem_patogenico", "tem_comensal",
+        ])
     return pd.DataFrame(rows)
 
 
@@ -310,10 +325,55 @@ def build_fecal_cumulative_curve(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out_rows)
 
 
+def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
+    """Estrutura de retorno usada quando não há nenhuma criança identificada
+    (planilha vazia ou sem id_paciente preenchido). Evita quebrar o pipeline em
+    DataFrames com 0 linhas, onde o pandas cria colunas com dtype 'object' e a
+    indexação booleana perde as colunas."""
+    empty_cat = pd.Series([0, 0, 0, 0], index=[
+        "Fezes e lâmina", "Apenas fezes (sem lâmina)", "Apenas lâmina (sem fezes)", "Nenhum material",
+    ])
+    empty_child = por_crianca  # já vem com as colunas certas, só sem linhas
+    empty_especies = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria"])
+    empty_combos = pd.DataFrame(columns=["combinacao", "n"])
+    empty_metodos = pd.DataFrame(columns=[
+        "metodo", "amostra_biologica", "n_criancas_testaveis", "n_criancas_positivas",
+        "n_criancas_inconclusivas", "prevalencia",
+    ])
+    empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "prevalencia"])
+    empty_cumulativa = pd.DataFrame(columns=["k", "n_criancas", "prevalencia_cumulativa"])
+    return {
+        "por_crianca": empty_child,
+        "total": 0,
+        "analisavel": empty_child,
+        "fecal": empty_child,
+        "apenas_lamina": empty_child,
+        "fecal_conclusivo": empty_child,
+        "fecal_inconclusivo": empty_child,
+        "lamina_only_conclusivo": empty_child,
+        "lamina_only_inconclusivo": empty_child,
+        "combinada_base": empty_child,
+        "combinada_inconclusiva": empty_child,
+        "cat_counts": empty_cat,
+        "prev_fecal": 0.0,
+        "prev_lamina": 0.0,
+        "prev_combinada": 0.0,
+        "especies_resumo": empty_especies,
+        "poli": 0, "mono": 0, "neg": 0,
+        "combos_resumo": empty_combos,
+        "metodos_resumo": empty_metodos,
+        "efeito_n_coletas": empty_efeito,
+        "fecal_cumulativa": empty_cumulativa,
+    }
+
+
 def compute_metrics(df: pd.DataFrame) -> dict:
     por_crianca = build_per_child(df)
     total = len(por_crianca)
-    analisavel = por_crianca[por_crianca["participou_estudo"]]
+    if total == 0:
+        return _empty_metrics(por_crianca)
+
+    analisavel = por_crianca[por_crianca["participou_estudo"].astype(bool)]
     fecal = analisavel[analisavel["n_coletas_pote_entregue"] > 0]
     apenas_lamina = analisavel[analisavel["n_coletas_pote_entregue"] == 0]
 
@@ -350,14 +410,15 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     for especies in fecal_conclusivo["especies_fecais"]:
         for e in especies:
             especie_count[e] = especie_count.get(e, 0) + 1
-    especies_resumo = pd.DataFrame([
-        {
-            "especie": e, "n": n, "prevalencia": pct(n, len(fecal_conclusivo)),
-            "categoria": "Patogênico" if e in PATOGENICOS else ("Comensal" if e in COMENSAIS else "Não classificado"),
-        }
-        for e, n in especie_count.items()
-    ]).sort_values("n", ascending=False).reset_index(drop=True)
-    if especies_resumo.empty:
+    if especie_count:
+        especies_resumo = pd.DataFrame([
+            {
+                "especie": e, "n": n, "prevalencia": pct(n, len(fecal_conclusivo)),
+                "categoria": "Patogênico" if e in PATOGENICOS else ("Comensal" if e in COMENSAIS else "Não classificado"),
+            }
+            for e, n in especie_count.items()
+        ]).sort_values("n", ascending=False).reset_index(drop=True)
+    else:
         especies_resumo = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria"])
 
     # ---- mono/poliparasitismo — restrito a espécies fecais, base = fecal_conclusivo
