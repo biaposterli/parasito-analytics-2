@@ -1,0 +1,333 @@
+"""
+Geração do relatório em PDF — LaPaHV
+Usa reportlab (layout) + matplotlib (gráficos estáticos), ambas bibliotecas puras em Python,
+sem dependências de sistema — rodam sem problemas no Streamlit Community Cloud.
+"""
+import io
+from datetime import datetime
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether, HRFlowable,
+)
+
+# ---------------------------------------------------------------- paleta
+INK = colors.HexColor("#11483D")
+INK_SOFT = colors.HexColor("#3E5F55")
+TEAL = colors.HexColor("#328567")
+TEAL_DARK = colors.HexColor("#11483D")
+TEAL_TINT = colors.HexColor("#E2F0E7")
+BRICK = colors.HexColor("#9C4A2E")
+BRICK_TINT = colors.HexColor("#F1E2D8")
+AMBER = colors.HexColor("#5F8A4E")
+SAGE = colors.HexColor("#7DAE84")
+LINE = colors.HexColor("#DAE1D5")
+BG = colors.HexColor("#F5F0EA")
+
+MPL_TEAL = "#328567"
+MPL_TEAL_DARK = "#11483D"
+MPL_BRICK = "#9C4A2E"
+MPL_AMBER = "#5F8A4E"
+MPL_SAGE = "#7DAE84"
+MPL_LINE = "#DAE1D5"
+
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "axes.edgecolor": MPL_LINE,
+    "axes.labelcolor": "#3E5F55",
+    "text.color": "#11483D",
+    "xtick.color": "#3E5F55",
+    "ytick.color": "#3E5F55",
+    "axes.grid": True,
+    "grid.color": MPL_LINE,
+    "grid.linewidth": 0.6,
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+})
+
+
+def _fig_to_image(fig, width_mm=160):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    w = width_mm * mm
+    from PIL import Image as PILImage
+    pil = PILImage.open(buf)
+    aspect = pil.height / pil.width
+    buf.seek(0)
+    return Image(buf, width=w, height=w * aspect)
+
+
+def _chart_especies(especies_df):
+    if especies_df.empty:
+        return None
+    df = especies_df.sort_values("prevalencia")
+    colors_map = {"Patogênico": MPL_BRICK, "Comensal": MPL_AMBER, "Não classificado": MPL_SAGE}
+    bar_colors = [colors_map.get(c, MPL_SAGE) for c in df["categoria"]]
+    fig, ax = plt.subplots(figsize=(6.2, max(1.6, 0.4 * len(df))))
+    ax.barh(df["especie"], df["prevalencia"], color=bar_colors)
+    ax.set_xlabel("Prevalência (%)")
+    for i, v in enumerate(df["prevalencia"]):
+        ax.text(v + 0.5, i, f"{v}%", va="center", fontsize=8)
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
+def _chart_poli(neg, mono, poli):
+    fig, ax = plt.subplots(figsize=(4.2, 4.2))
+    vals = [neg, mono, poli]
+    labels = ["Negativo", "Monoparasitismo", "Poliparasitismo"]
+    cols = [MPL_SAGE, MPL_TEAL, MPL_BRICK]
+    vals_nz = [v for v in vals if v > 0]
+    if sum(vals) == 0:
+        plt.close(fig)
+        return None
+    ax.pie(vals, labels=labels, autopct=lambda p: f"{p:.0f}%" if p > 0 else "", colors=cols,
+           wedgeprops={"linewidth": 1, "edgecolor": "white"}, textprops={"fontsize": 8})
+    fig.tight_layout()
+    return _fig_to_image(fig, width_mm=90)
+
+
+def _chart_metodos(metodos_df):
+    fig, ax = plt.subplots(figsize=(6.2, 3))
+    ax.bar(metodos_df["metodo"], metodos_df["prevalencia"], color=MPL_TEAL)
+    ax.set_ylabel("Prevalência (%)")
+    for i, v in enumerate(metodos_df["prevalencia"]):
+        ax.text(i, v + 0.5, f"{v}%", ha="center", fontsize=8)
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
+def _chart_ncoletas(efeito_df):
+    if efeito_df.empty:
+        return None
+    fig, ax = plt.subplots(figsize=(6.2, 3))
+    labels = [f"{int(r.n_potes_entregues)} pote(s)\nn={int(r.n_criancas)}" for r in efeito_df.itertuples()]
+    ax.bar(labels, efeito_df["prevalencia"], color=MPL_TEAL_DARK)
+    ax.set_ylabel("Prevalência (%)")
+    for i, v in enumerate(efeito_df["prevalencia"]):
+        ax.text(i, v + 0.5, f"{v}%", ha="center", fontsize=8)
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
+def _styles():
+    ss = getSampleStyleSheet()
+    styles = {
+        "title": ParagraphStyle("lp_title", parent=ss["Title"], fontName="Helvetica-Bold",
+                                 fontSize=20, textColor=TEAL_DARK, alignment=TA_LEFT, spaceAfter=2),
+        "eyebrow": ParagraphStyle("lp_eyebrow", parent=ss["Normal"], fontName="Helvetica-Bold",
+                                   fontSize=9, textColor=TEAL, spaceAfter=10, tracking=0.5),
+        "h2": ParagraphStyle("lp_h2", parent=ss["Heading2"], fontName="Helvetica-Bold",
+                              fontSize=13.5, textColor=TEAL_DARK, spaceBefore=16, spaceAfter=6),
+        "body": ParagraphStyle("lp_body", parent=ss["Normal"], fontName="Helvetica",
+                                fontSize=9.5, textColor=INK_SOFT, leading=13.5),
+        "note": ParagraphStyle("lp_note", parent=ss["Normal"], fontName="Helvetica",
+                                fontSize=9, textColor=INK_SOFT, leading=13, backColor=BRICK_TINT,
+                                borderPadding=8, leftIndent=4),
+        "small": ParagraphStyle("lp_small", parent=ss["Normal"], fontName="Helvetica",
+                                 fontSize=8, textColor=colors.HexColor("#7C8B81")),
+    }
+    return styles
+
+
+def _stat_table(metrics):
+    data = [
+        ["PREVALÊNCIA — AMOSTRA FECAL", "PREVALÊNCIA — SÓ LÂMINA", "PREVALÊNCIA COMBINADA"],
+        [f"{metrics['prev_fecal']:.1f}%", f"{metrics['prev_lamina']:.1f}%", f"{metrics['prev_combinada']:.1f}%"],
+        [
+            f"{int(metrics['fecal']['positivo_algum_metodo'].sum())} de {len(metrics['fecal'])} crianças",
+            f"{int(metrics['apenas_lamina']['positivo_algum_metodo'].sum())} de {len(metrics['apenas_lamina'])} crianças",
+            f"{int(metrics['analisavel']['positivo_algum_metodo'].sum())} de {len(metrics['analisavel'])} crianças",
+        ],
+    ]
+    t = Table(data, colWidths=[56 * mm, 56 * mm, 56 * mm])
+    t.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 7.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#7C8B81")),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 1), (-1, 1), 20),
+        ("TEXTCOLOR", (0, 1), (-1, 1), TEAL_DARK),
+        ("FONTNAME", (0, 2), (-1, 2), "Helvetica"),
+        ("FONTSIZE", (0, 2), (-1, 2), 8),
+        ("TEXTCOLOR", (0, 2), (-1, 2), colors.HexColor("#7C8B81")),
+        ("BOX", (0, 0), (0, -1), 0.7, LINE),
+        ("BOX", (1, 0), (1, -1), 0.7, LINE),
+        ("BOX", (2, 0), (2, -1), 0.7, LINE),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    return t
+
+
+def _df_table(df, col_labels=None, col_widths=None, max_rows=None):
+    styles = _styles()
+    cell_style = ParagraphStyle("lp_cell", parent=styles["body"], fontSize=8, leading=10.5, textColor=INK)
+    header_style = ParagraphStyle("lp_cell_header", parent=styles["body"], fontSize=8,
+                                   fontName="Helvetica-Bold", textColor=colors.HexColor("#7C8B81"))
+    if df.empty:
+        return Paragraph("Sem dados.", styles["body"])
+    if max_rows:
+        df = df.head(max_rows)
+    headers = col_labels or list(df.columns)
+    header_row = [Paragraph(str(h), header_style) for h in headers]
+    body_rows = [[Paragraph(str(v), cell_style) for v in row] for row in df.astype(str).values.tolist()]
+    data = [header_row] + body_rows
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, 0), 0.9, colors.HexColor("#AFC6B4")),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.4, LINE),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    return t
+
+
+def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
+    styles = _styles()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=18 * mm, bottomMargin=16 * mm, leftMargin=18 * mm, rightMargin=18 * mm,
+        title="Relatório de Análise Epidemiológica — LaPaHV",
+    )
+    story = []
+
+    # ---- cabeçalho ----
+    header_cells = []
+    if logo_path:
+        try:
+            header_cells.append(Image(logo_path, width=16 * mm, height=20 * mm))
+        except Exception:
+            header_cells.append("")
+    title_block = [
+        Paragraph("LABORATÓRIO DE PARASITOLOGIA HUMANA E VETERINÁRIA", styles["eyebrow"]),
+        Paragraph("Relatório de análise epidemiológica", styles["title"]),
+        Paragraph(f"Gerado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}", styles["small"]),
+    ]
+    if header_cells:
+        t = Table([[header_cells[0], title_block]], colWidths=[20 * mm, 150 * mm])
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (1, 0), (1, 0), 8)]))
+        story.append(t)
+    else:
+        story.extend(title_block)
+
+    story.append(Spacer(1, 4 * mm))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=LINE))
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(Paragraph(
+        f"{metrics['total']} crianças cadastradas &middot; {len(metrics['fecal'])} com amostra fecal "
+        f"analisada &middot; {len(metrics['apenas_lamina'])} só com lâmina.",
+        styles["body"],
+    ))
+    story.append(Spacer(1, 4 * mm))
+
+    # ---- resumo executivo ----
+    story.append(_stat_table(metrics))
+    story.append(Spacer(1, 3 * mm))
+
+    if len(metrics["apenas_lamina"]) > 0:
+        note = (
+            f"<b>Atenção:</b> {len(metrics['apenas_lamina'])} criança(s) só entregaram a lâmina, nunca "
+            "o pote de fezes — para elas, apenas <i>Enterobius vermicularis</i> pôde ser pesquisado. "
+            "A prevalência principal do estudo considera só quem teve amostra fecal analisada; o "
+            "subgrupo de só-lâmina é reportado à parte."
+        )
+        story.append(Paragraph(note, styles["note"]))
+
+    # ---- profundidade de amostragem ----
+    story.append(Paragraph("Crianças por profundidade de amostragem", styles["h2"]))
+    cat_df = metrics["cat_counts"].rename("n_criancas").to_frame()
+    cat_df["%"] = (100 * cat_df["n_criancas"] / metrics["total"]).round(1)
+    cat_df = cat_df.reset_index().rename(columns={"index": "categoria_amostragem", "categoria_amostragem": "Categoria"})
+    cat_df.columns = ["Categoria", "Nº crianças", "%"]
+    story.append(_df_table(cat_df, col_widths=[80 * mm, 35 * mm, 25 * mm]))
+
+    # ---- prevalência por espécie ----
+    story.append(Paragraph("Prevalência por espécie (base: fezes analisadas)", styles["h2"]))
+    esp_img = _chart_especies(metrics["especies_resumo"])
+    if esp_img:
+        story.append(esp_img)
+        story.append(Spacer(1, 2 * mm))
+    esp_table = metrics["especies_resumo"].rename(
+        columns={"especie": "Espécie", "n": "N", "prevalencia": "Prevalência %", "categoria": "Categoria"}
+    )
+    story.append(_df_table(esp_table, col_widths=[60 * mm, 20 * mm, 30 * mm, 30 * mm]))
+
+    # ---- poliparasitismo ----
+    story.append(Paragraph("Mono x poliparasitismo", styles["h2"]))
+    poli_img = _chart_poli(metrics["neg"], metrics["mono"], metrics["poli"])
+    if poli_img:
+        story.append(poli_img)
+        story.append(Spacer(1, 2 * mm))
+    if not metrics["combos_resumo"].empty:
+        story.append(Paragraph("Combinações mais frequentes:", styles["body"]))
+        combo_table = metrics["combos_resumo"].rename(columns={"combinacao": "Combinação", "n": "N"})
+        story.append(_df_table(combo_table, col_widths=[110 * mm, 20 * mm]))
+
+    # ---- comparação de métodos ----
+    story.append(Paragraph("Comparação entre métodos diagnósticos", styles["h2"]))
+    met_img = _chart_metodos(metrics["metodos_resumo"])
+    if met_img:
+        story.append(met_img)
+        story.append(Spacer(1, 2 * mm))
+    met_table = metrics["metodos_resumo"].rename(columns={
+        "metodo": "Método", "amostra_biologica": "Amostra", "n_criancas_testaveis": "Testáveis",
+        "n_criancas_positivas": "Positivas", "prevalencia": "Prevalência %",
+    })
+    story.append(_df_table(met_table, col_widths=[35 * mm, 32 * mm, 25 * mm, 25 * mm, 30 * mm]))
+
+    # ---- efeito n coletas ----
+    story.append(Paragraph("Efeito do número de potes de fezes entregues", styles["h2"]))
+    nc_img = _chart_ncoletas(metrics["efeito_n_coletas"])
+    if nc_img:
+        story.append(nc_img)
+
+    # ---- base por criança ----
+    story.append(Paragraph("Base por criança", styles["h2"]))
+    story.append(Paragraph(
+        "Tabela completa disponível no arquivo Excel exportado junto com este PDF; abaixo, uma "
+        "amostra das primeiras linhas.",
+        styles["body"],
+    ))
+    story.append(Spacer(1, 2 * mm))
+    child_cols = ["id_paciente", "nome_crianca", "categoria_amostragem", "especies_str"]
+    child_df = metrics["por_crianca"][child_cols].sort_values("id_paciente").rename(columns={
+        "id_paciente": "ID", "nome_crianca": "Nome", "categoria_amostragem": "Amostragem", "especies_str": "Espécies",
+    })
+    story.append(_df_table(child_df, col_widths=[22 * mm, 42 * mm, 42 * mm, 54 * mm], max_rows=30))
+    if len(child_df) > 30:
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(
+            f"… e mais {len(child_df) - 30} crianças. Veja a lista completa no Excel exportado.",
+            styles["small"],
+        ))
+
+    story.append(Spacer(1, 6 * mm))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=LINE))
+    story.append(Spacer(1, 3 * mm))
+    story.append(Paragraph(
+        "Nota metodológica: a prevalência é calculada por criança, não por exame — uma criança conta "
+        "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de fezes "
+        "alimenta os métodos HPJ, Willis e Baermann-Picanço; a lâmina alimenta exclusivamente o "
+        "método de Graham.",
+        styles["small"],
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
