@@ -395,7 +395,7 @@ if uploaded_file is not None:
                 "compara SUBGRUPOS diferentes de crianças (quem entregou 1, 2 ou 3 potes), o que "
                 "pode ter viés de seleção — famílias que entregam mais amostras podem diferir "
                 "sistematicamente das que entregam menos. Para uma estimativa sem esse viés, veja "
-                "a curva cumulativa logo abaixo, calculada na mesma corte de crianças."
+                "a curva cumulativa logo abaixo, calculada no mesmo grupo de crianças."
             )
             if not metrics["efeito_n_coletas"].empty:
                 fig4 = px.bar(
@@ -416,7 +416,7 @@ if uploaded_file is not None:
                 n_corte = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
                 k_max = int(metrics["fecal_cumulativa"]["k"].max())
                 st.caption(
-                    f"Mesma corte de {n_corte} criança(s) que entregou o número máximo de potes "
+                    f"Mesmo grupo de {n_corte} criança(s) que entregou o número máximo de potes "
                     f"observado no estudo ({k_max}), medindo quantas ficariam positivas se o "
                     "laboratório parasse na 1ª, 2ª ... até a última coleta. Como é a mesma "
                     "criança sendo acompanhada (medida repetida), este gráfico não sofre o viés "
