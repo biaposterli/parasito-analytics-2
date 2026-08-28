@@ -413,10 +413,10 @@ if uploaded_file is not None:
             st.write("")
             st.markdown("#### Ganho marginal por amostra — curva cumulativa")
             if not metrics["fecal_cumulativa"].empty:
-                n_corte = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
+                n_grupo = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
                 k_max = int(metrics["fecal_cumulativa"]["k"].max())
                 st.caption(
-                    f"Mesmo grupo de {n_corte} criança(s) que entregou o número máximo de potes "
+                    f"Mesmo grupo de {n_grupo} criança(s) que entregou o número máximo de potes "
                     f"observado no estudo ({k_max}), medindo quantas ficariam positivas se o "
                     "laboratório parasse na 1ª, 2ª ... até a última coleta. Como é a mesma "
                     "criança sendo acompanhada (medida repetida), este gráfico não sofre o viés "
