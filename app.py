@@ -23,6 +23,7 @@ from analysis_engine import (
     normalize_columns,
     validate_columns,
 )
+from report_pdf import build_pdf_report
 
 APP_DIR = Path(__file__).parent
 LOGO_PATH = APP_DIR / "logo.png"
@@ -404,12 +405,23 @@ if uploaded_file is not None:
                 return buf.getvalue()
 
             st.write("")
-            st.download_button(
-                "⬇ Baixar relatório em Excel",
-                data=generate_report_excel_bytes(metrics),
-                file_name="Relatorio_Analise_Epidemiologica.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                st.download_button(
+                    "⬇ Baixar relatório em Excel",
+                    data=generate_report_excel_bytes(metrics),
+                    file_name="Relatorio_Analise_Epidemiologica.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
+            with col_dl2:
+                st.download_button(
+                    "⬇ Baixar relatório em PDF",
+                    data=build_pdf_report(metrics, logo_path=str(LOGO_PATH) if LOGO_PATH.exists() else None),
+                    file_name="Relatorio_Analise_Epidemiologica.pdf",
+                    mime="application/pdf",
+                    width="stretch",
+                )
 
 st.divider()
 st.caption(
