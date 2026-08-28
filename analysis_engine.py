@@ -21,6 +21,10 @@ Correções em relação à v1:
      entregaram o número máximo de potes, medida repetida), que é o desenho
      correto para estimar o ganho marginal de cada amostra adicional sem o viés de
      seleção de comparar subgrupos diferentes de crianças.
+  6) Entamoeba histolytica/dispar passa a ser classificada como PATOGÊNICA (não mais
+     comensal): como a diferenciação morfológica entre E. histolytica (patogênica) e
+     E. dispar (comensal) não é possível no laboratório, todo achado desse complexo
+     precisa ser tratado clinicamente como potencialmente patogênico.
 """
 import re
 import unicodedata
@@ -46,8 +50,13 @@ PARASITE_MAP = {
     "iodamoeba butschlii": "Iodamoeba butschlii",
     "iodamoeba": "Iodamoeba butschlii",
 }
-PATOGENICOS = {"Enterobius vermicularis", "Giardia lamblia", "Balantidium coli"}
-COMENSAIS = {"Endolimax nana", "Entamoeba histolytica/dispar", "Iodamoeba butschlii"}
+PATOGENICOS = {
+    "Enterobius vermicularis",
+    "Giardia lamblia",
+    "Balantidium coli",
+    "Entamoeba histolytica/dispar",
+}
+COMENSAIS = {"Endolimax nana", "Iodamoeba butschlii"}
 NEGATIVE_TOKENS = {"-", "negativo", "neg"}
 INSUFFICIENT_TOKENS = {"amostra insuficiente", "insuficiente"}
 
