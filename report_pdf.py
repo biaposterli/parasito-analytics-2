@@ -88,7 +88,6 @@ def _chart_poli(neg, mono, poli):
     vals = [neg, mono, poli]
     labels = ["Negativo", "Monoparasitismo", "Poliparasitismo"]
     cols = [MPL_SAGE, MPL_TEAL, MPL_BRICK]
-    vals_nz = [v for v in vals if v > 0]
     if sum(vals) == 0:
         plt.close(fig)
         return None
@@ -121,6 +120,20 @@ def _chart_ncoletas(efeito_df):
     return _fig_to_image(fig)
 
 
+def _chart_cumulativa(cum_df):
+    if cum_df.empty:
+        return None
+    fig, ax = plt.subplots(figsize=(6.2, 3))
+    ax.plot(cum_df["k"], cum_df["prevalencia_cumulativa"], marker="o", color=MPL_TEAL_DARK)
+    ax.set_xlabel("Nº de potes considerados (cumulativo)")
+    ax.set_ylabel("Prevalência cumulativa (%)")
+    ax.set_xticks(cum_df["k"])
+    for x, v in zip(cum_df["k"], cum_df["prevalencia_cumulativa"]):
+        ax.text(x, v + 1.5, f"{v}%", ha="center", fontsize=8)
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
 def _styles():
     ss = getSampleStyleSheet()
     styles = {
@@ -146,9 +159,9 @@ def _stat_table(metrics):
         ["PREVALÊNCIA — AMOSTRA FECAL", "PREVALÊNCIA — SÓ LÂMINA", "PREVALÊNCIA COMBINADA"],
         [f"{metrics['prev_fecal']:.1f}%", f"{metrics['prev_lamina']:.1f}%", f"{metrics['prev_combinada']:.1f}%"],
         [
-            f"{int(metrics['fecal']['positivo_algum_metodo'].sum())} de {len(metrics['fecal'])} crianças",
-            f"{int(metrics['apenas_lamina']['positivo_algum_metodo'].sum())} de {len(metrics['apenas_lamina'])} crianças",
-            f"{int(metrics['analisavel']['positivo_algum_metodo'].sum())} de {len(metrics['analisavel'])} crianças",
+            f"{int(metrics['fecal_conclusivo']['positivo_fecal'].sum())} de {len(metrics['fecal_conclusivo'])} crianças (conclusivas)",
+            f"{int(metrics['lamina_only_conclusivo']['positivo_lamina'].sum())} de {len(metrics['lamina_only_conclusivo'])} crianças (conclusivas)",
+            f"{int(metrics['combinada_base']['positivo_algum_metodo'].sum())} de {len(metrics['combinada_base'])} crianças (conclusivas)",
         ],
     ]
     t = Table(data, colWidths=[56 * mm, 56 * mm, 56 * mm])
@@ -232,7 +245,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
 
     story.append(Paragraph(
         f"{metrics['total']} crianças cadastradas &middot; {len(metrics['fecal'])} com amostra fecal "
-        f"analisada &middot; {len(metrics['apenas_lamina'])} só com lâmina.",
+        f"entregue &middot; {len(metrics['apenas_lamina'])} só com lâmina.",
         styles["body"],
     ))
     story.append(Spacer(1, 4 * mm))
@@ -240,6 +253,20 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- resumo executivo ----
     story.append(_stat_table(metrics))
     story.append(Spacer(1, 3 * mm))
+
+    n_inconclusivas = len(metrics["fecal_inconclusivo"]) + len(metrics["lamina_only_inconclusivo"])
+    if n_inconclusivas > 0:
+        note_inc = (
+            f"<b>Amostras inconclusivas:</b> {len(metrics['fecal_inconclusivo'])} criança(s) com "
+            "pote de fezes entregue tiveram todos os métodos fecais marcados como \"Amostra "
+            "insuficiente\" (ou sem resultado registrado)"
+            + (f"; {len(metrics['lamina_only_inconclusivo'])} criança(s) na mesma situação só com "
+               "lâmina" if len(metrics['lamina_only_inconclusivo']) else "")
+            + ". Essas crianças foram excluídas dos denominadores de prevalência — não contam "
+              "como negativas."
+        )
+        story.append(Paragraph(note_inc, styles["note"]))
+        story.append(Spacer(1, 2 * mm))
 
     if len(metrics["apenas_lamina"]) > 0:
         note = (
@@ -259,7 +286,13 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(_df_table(cat_df, col_widths=[80 * mm, 35 * mm, 25 * mm]))
 
     # ---- prevalência por espécie ----
-    story.append(Paragraph("Prevalência por espécie (base: fezes analisadas)", styles["h2"]))
+    story.append(Paragraph("Prevalência por espécie — métodos fecais (base: fezes com resultado conclusivo)", styles["h2"]))
+    story.append(Paragraph(
+        "Enterobius vermicularis (detectado pelo Graham/lâmina) não entra nesta tabela; sua "
+        "prevalência, com denominador próprio, está na tabela de comparação de métodos.",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 1.5 * mm))
     esp_img = _chart_especies(metrics["especies_resumo"])
     if esp_img:
         story.append(esp_img)
@@ -270,7 +303,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(_df_table(esp_table, col_widths=[60 * mm, 20 * mm, 30 * mm, 30 * mm]))
 
     # ---- poliparasitismo ----
-    story.append(Paragraph("Mono x poliparasitismo", styles["h2"]))
+    story.append(Paragraph("Mono x poliparasitismo (base: espécies de origem fecal)", styles["h2"]))
     poli_img = _chart_poli(metrics["neg"], metrics["mono"], metrics["poli"])
     if poli_img:
         story.append(poli_img)
@@ -282,21 +315,49 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
 
     # ---- comparação de métodos ----
     story.append(Paragraph("Comparação entre métodos diagnósticos", styles["h2"]))
+    story.append(Paragraph(
+        "Denominador = crianças com resultado conclusivo naquele método específico (exclui "
+        "\"Amostra insuficiente\").",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 1.5 * mm))
     met_img = _chart_metodos(metrics["metodos_resumo"])
     if met_img:
         story.append(met_img)
         story.append(Spacer(1, 2 * mm))
     met_table = metrics["metodos_resumo"].rename(columns={
         "metodo": "Método", "amostra_biologica": "Amostra", "n_criancas_testaveis": "Testáveis",
-        "n_criancas_positivas": "Positivas", "prevalencia": "Prevalência %",
+        "n_criancas_positivas": "Positivas", "n_criancas_inconclusivas": "Inconclusivas",
+        "prevalencia": "Prevalência %",
     })
-    story.append(_df_table(met_table, col_widths=[35 * mm, 32 * mm, 25 * mm, 25 * mm, 30 * mm]))
+    story.append(_df_table(met_table, col_widths=[28 * mm, 25 * mm, 20 * mm, 20 * mm, 22 * mm, 25 * mm]))
 
     # ---- efeito n coletas ----
     story.append(Paragraph("Efeito do número de potes de fezes entregues", styles["h2"]))
+    story.append(Paragraph(
+        "Baseado apenas em positividade fecal. Compara subgrupos diferentes de crianças — pode "
+        "ter viés de seleção; ver curva cumulativa abaixo para uma leitura sem esse viés.",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 1.5 * mm))
     nc_img = _chart_ncoletas(metrics["efeito_n_coletas"])
     if nc_img:
         story.append(nc_img)
+
+    # ---- curva cumulativa ----
+    if not metrics["fecal_cumulativa"].empty:
+        story.append(Paragraph("Ganho marginal por amostra — curva cumulativa", styles["h2"]))
+        n_coorte = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
+        story.append(Paragraph(
+            f"Mesma coorte de {n_coorte} criança(s) que entregou o número máximo de potes "
+            "observado no estudo, medida repetida (1ª, 1ª+2ª ... coletas). Sem viés de comparar "
+            "subgrupos diferentes de crianças.",
+            styles["small"],
+        ))
+        story.append(Spacer(1, 1.5 * mm))
+        cum_img = _chart_cumulativa(metrics["fecal_cumulativa"])
+        if cum_img:
+            story.append(cum_img)
 
     # ---- base por criança ----
     story.append(Paragraph("Base por criança", styles["h2"]))
@@ -325,7 +386,8 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
         "Nota metodológica: a prevalência é calculada por criança, não por exame — uma criança conta "
         "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de fezes "
         "alimenta os métodos HPJ, Willis e Baermann-Picanço; a lâmina alimenta exclusivamente o "
-        "método de Graham.",
+        "método de Graham. Crianças cujos únicos resultados foram \"Amostra insuficiente\" são "
+        "reportadas à parte como inconclusivas e não entram nos denominadores de prevalência.",
         styles["small"],
     ))
 
