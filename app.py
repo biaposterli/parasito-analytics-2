@@ -192,6 +192,10 @@ st.markdown(
         font-family:'Fraunces', serif; font-weight:600; color:{TEAL_DARK};
         font-size: 19px; margin: 2px 0 2px 0;
     }}
+    .lapahv-section-subtitle {{
+        font-family:'Fraunces', serif; font-weight:600; color:{TEAL_DARK};
+        font-size: 15.5px; margin: 2px 0 2px 0;
+    }}
     .lapahv-section-caption {{
         color:{INK_FAINT}; font-size: 12.5px; margin-bottom: 10px;
     }}
@@ -248,6 +252,12 @@ PLOTLY_LAYOUT = dict(
 
 def section_title(text, caption=None):
     st.markdown(f'<div class="lapahv-section-title">{text}</div>', unsafe_allow_html=True)
+    if caption:
+        st.markdown(f'<div class="lapahv-section-caption">{caption}</div>', unsafe_allow_html=True)
+
+
+def subsection_title(text, caption=None):
+    st.markdown(f'<div class="lapahv-section-subtitle">{text}</div>', unsafe_allow_html=True)
     if caption:
         st.markdown(f'<div class="lapahv-section-caption">{caption}</div>', unsafe_allow_html=True)
 
@@ -346,6 +356,14 @@ with st.sidebar:
     st.caption(
         "**Pote de fezes** → HPJ, Willis, Baermann-Picanço.\n\n"
         "**Lâmina (swab)** → exclusivamente Graham."
+    )
+
+    st.divider()
+    st.markdown('<span class="lapahv-eyebrow">Classificação clínica</span>', unsafe_allow_html=True)
+    st.caption(
+        "*Entamoeba histolytica/dispar* é tratada como **patogênica**: a diferenciação "
+        "morfológica entre as duas formas não é possível no laboratório, então todo achado "
+        "do complexo é reportado como potencialmente patogênico."
     )
 
 # ==================================================================
@@ -476,7 +494,7 @@ if uploaded_file is not None:
                 )
 
                 tab_geral, tab_especies, tab_metodos, tab_base, tab_export = st.tabs(
-                    ["📊  Visão geral", "🦠  Espécies", "🔬  Métodos & amostragem", "📋  Base por criança", "⬇  Exportar"]
+                    ["📊  Visão geral", "🦠  Espécies & parasitos", "🔬  Métodos & amostragem", "📋  Base por criança", "⬇  Exportar"]
                 )
 
                 # ---------------------------------------------------------
@@ -488,7 +506,7 @@ if uploaded_file is not None:
                     c1.metric("Prevalência — amostra fecal", f"{metrics['prev_fecal']:.1f}%",
                                help="Base: crianças com resultado CONCLUSIVO em pelo menos um método "
                                     "fecal (HPJ, Willis ou Baermann-Picanço). Achados exclusivos do "
-                                    "Graham (lâmina) não entram aqui — veja 'Métodos & amostragem' "
+                                    "Graham (lâmina) não entram aqui — veja 'Espécies & parasitos' "
                                     "para a prevalência de Enterobius. Crianças com todos os resultados "
                                     "fecais marcados como 'Amostra insuficiente' são excluídas do "
                                     "denominador (não contam como negativas).")
@@ -529,13 +547,63 @@ if uploaded_file is not None:
                     st.dataframe(cat_df, width='stretch')
 
                 # ---------------------------------------------------------
-                # ABA 2 — ESPÉCIES
+                # ABA 2 — ESPÉCIES & PARASITOS
                 # ---------------------------------------------------------
                 with tab_especies:
                     section_title(
+                        "Prevalência de todos os parasitos",
+                        "Reúne, num só gráfico, as espécies encontradas por métodos fecais (HPJ, "
+                        "Willis, Baermann-Picanço) e por Graham/lâmina. Como as bases de cálculo são "
+                        "diferentes por domínio — fecal usa como denominador as crianças com resultado "
+                        "fecal conclusivo, e Enterobius (Graham) usa as crianças com Graham conclusivo — "
+                        "a tabela ao lado do gráfico mostra o denominador (Base N) e o(s) método(s) que "
+                        "detectou(aram) cada espécie.",
+                    )
+                    colT, colU = st.columns([3, 2])
+                    with colT:
+                        if not metrics["todos_parasitos_resumo"].empty:
+                            fig_all = px.bar(
+                                metrics["todos_parasitos_resumo"].sort_values("prevalencia"),
+                                x="prevalencia", y="especie", orientation="h",
+                                color="categoria",
+                                color_discrete_map={"Patogênico": BRICK, "Comensal": AMBER, "Não classificado": SAGE},
+                                pattern_shape="dominio",
+                                labels={"prevalencia": "Prevalência (%)", "especie": "", "dominio": "Amostra"},
+                                hover_data={"metodos": True, "base_n": True, "n": True},
+                            )
+                            fig_all.update_layout(**PLOTLY_LAYOUT, showlegend=True, legend_title="")
+                            st.plotly_chart(fig_all, width='stretch')
+                        else:
+                            st.info("Nenhum parasito detectado nesta base.")
+                    with colU:
+                        todos_display = metrics["todos_parasitos_resumo"].rename(columns={
+                            "especie": "Espécie", "categoria": "Categoria", "dominio": "Amostra",
+                            "n": "N", "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)",
+                        })
+                        st.dataframe(todos_display, width='stretch', hide_index=True)
+
+                    st.write("")
+                    subsection_title(
+                        "Prevalência por método diagnóstico e espécie",
+                        "Cada célula mostra a prevalência (%) daquela espécie especificamente pelo "
+                        "método indicado, com denominador = crianças com resultado conclusivo NAQUELE "
+                        "método. Uma mesma espécie pode aparecer em mais de um método fecal (ex.: um "
+                        "ovo de helminto pode ser visto tanto no HPJ quanto no Willis).",
+                    )
+                    if not metrics["metodo_especie_resumo"].empty:
+                        pivot = metrics["metodo_especie_resumo"].pivot_table(
+                            index="especie", columns="metodo", values="prevalencia", aggfunc="first",
+                        ).reindex(columns=["Graham", "HPJ", "Willis", "Baermann-Picanço"])
+                        st.dataframe(pivot, width='stretch')
+                    else:
+                        st.info("Nenhum dado suficiente para o cruzamento método x espécie.")
+
+                    st.write("")
+                    section_title(
                         "Prevalência por espécie — métodos fecais",
                         "Base: fezes com resultado conclusivo. Enterobius vermicularis (Graham/lâmina) "
-                        "tem base amostral diferente e aparece na aba 'Métodos & amostragem'.",
+                        "não entra nesta tabela — sua prevalência tem base amostral diferente e já "
+                        "aparece no gráfico unificado acima.",
                     )
                     colA, colB = st.columns([3, 2])
                     with colA:
@@ -659,7 +727,8 @@ if uploaded_file is not None:
                 # ---------------------------------------------------------
                 def generate_report_excel_bytes(m: dict) -> bytes:
                     buf = io.BytesIO()
-                    list_cols = ["especies", "especies_fecais", "especies_lamina"]
+                    list_cols = ["especies", "especies_fecais", "especies_lamina",
+                                 "especies_Graham", "especies_Baermann-Picanço", "especies_HPJ", "especies_Willis"]
                     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                         m["por_crianca"].drop(columns=[c for c in list_cols if c in m["por_crianca"].columns]).to_excel(
                             writer, sheet_name="Base_por_Crianca", index=False
@@ -672,7 +741,9 @@ if uploaded_file is not None:
                             {"metrica": "Inconclusivas — fezes (amostra insuficiente em tudo)", "valor_pct": None, "n_criancas": len(m["fecal_inconclusivo"])},
                             {"metrica": "Inconclusivas — só lâmina", "valor_pct": None, "n_criancas": len(m["lamina_only_inconclusivo"])},
                         ]).to_excel(writer, sheet_name="Prevalencia_Geral", index=False)
+                        m["todos_parasitos_resumo"].to_excel(writer, sheet_name="Todos_os_Parasitos", index=False)
                         m["especies_resumo"].to_excel(writer, sheet_name="Prevalencia_por_Especie", index=False)
+                        m["metodo_especie_resumo"].to_excel(writer, sheet_name="Prevalencia_Metodo_x_Especie", index=False)
                         pd.DataFrame([
                             {"categoria": "Negativo", "n": m["neg"]},
                             {"categoria": "Monoparasitismo", "n": m["mono"]},
