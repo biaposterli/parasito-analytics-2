@@ -784,9 +784,21 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     # numa só tabela, indicando por qual(is) método(s) cada espécie foi detectada.
     # Espécies fecais usam o denominador combinado (fecal_conclusivo, já que os 3
     # métodos fecais alimentam a mesma prevalência por criança); Enterobius
-    # vermicularis (só detectável pelo Graham) usa o denominador próprio do
-    # método Graham — os denominadores são reportados em 'base_n' porque não são
-    # o mesmo grupo de crianças.
+    # vermicularis, tipicamente diagnosticado pelo Graham mas ocasionalmente
+    # também visualizado num método fecal (achado incidental, igualmente válido
+    # — não é erro de digitação), usa o denominador próprio do(s) método(s) que
+    # a encontraram.
+    #
+    # IMPORTANTE: quando uma mesma espécie é encontrada em métodos de domínios
+    # diferentes (ex.: Enterobius no Graham de uma criança E no Willis de
+    # outra — ou, pior, da MESMA criança em coletas diferentes), apresentar uma
+    # linha por domínio faria a mesma criança ser contada separadamente em cada
+    # linha, inflando a impressão de nº de casos. Por isso, espécies que
+    # aparecem em mais de um domínio são reportadas numa ÚNICA linha
+    # "Fecal + Lâmina", com denominador e numerador calculados por CRIANÇA
+    # (união dos métodos relevantes) — uma criança positiva em qualquer um
+    # desses métodos conta uma vez só, mesmo que tenha sido detectada em mais
+    # de um.
     metodos_by_especie = {}
     if not metodo_especie_resumo.empty:
         metodos_by_especie = (
@@ -795,8 +807,20 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             .to_dict()
         )
 
+    especies_fecais_todas = set(especies_resumo["especie"]) if not especies_resumo.empty else set()
+    graham_especies = metodo_especie_resumo[metodo_especie_resumo["metodo"] == "Graham"] \
+        if not metodo_especie_resumo.empty else pd.DataFrame(columns=metodo_especie_resumo.columns)
+    especies_lamina_todas = set(graham_especies["especie"]) if not graham_especies.empty else set()
+    especies_multi_dominio = especies_fecais_todas & especies_lamina_todas
+
+    graham_conclusivos_n = int(
+        metodos_resumo.loc[metodos_resumo["metodo"] == "Graham", "n_criancas_testaveis"].iloc[0]
+    ) if not metodos_resumo.empty else 0
+
     todos_rows = []
     for _, r in especies_resumo.iterrows():
+        if r["especie"] in especies_multi_dominio:
+            continue  # tratada de forma combinada abaixo, para não contar a criança duas vezes
         todos_rows.append({
             "especie": r["especie"],
             "categoria": r["categoria"],
@@ -806,12 +830,9 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             "base_n": len(fecal_conclusivo),
             "metodos": metodos_by_especie.get(r["especie"], ""),
         })
-    graham_especies = metodo_especie_resumo[metodo_especie_resumo["metodo"] == "Graham"] \
-        if not metodo_especie_resumo.empty else pd.DataFrame(columns=metodo_especie_resumo.columns)
-    graham_conclusivos_n = int(
-        metodos_resumo.loc[metodos_resumo["metodo"] == "Graham", "n_criancas_testaveis"].iloc[0]
-    ) if not metodos_resumo.empty else 0
     for _, r in graham_especies.iterrows():
+        if r["especie"] in especies_multi_dominio:
+            continue
         todos_rows.append({
             "especie": r["especie"],
             "categoria": r["categoria"],
@@ -821,6 +842,33 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             "base_n": graham_conclusivos_n,
             "metodos": "Graham",
         })
+
+    for especie in especies_multi_dominio:
+        metodos_desta_especie = [
+            nome_m for _, nome_m, _, _ in METHOD_COLUMNS
+            if nome_m in metodos_by_especie.get(especie, "").split(" + ")
+        ]
+        status_cols = [f"status_{m}" for m in metodos_desta_especie if f"status_{m}" in por_crianca.columns]
+        especies_cols = [f"especies_{m}" for m in metodos_desta_especie if f"especies_{m}" in por_crianca.columns]
+        conclusivo_mask = pd.Series(False, index=por_crianca.index)
+        positivo_mask = pd.Series(False, index=por_crianca.index)
+        for sc in status_cols:
+            conclusivo_mask = conclusivo_mask | por_crianca[sc].isin(["positivo", "negativo"])
+        for ec in especies_cols:
+            positivo_mask = positivo_mask | por_crianca[ec].apply(lambda lst: especie in lst)
+        base_n = int(conclusivo_mask.sum())
+        n = int(positivo_mask.sum())
+        categoria = "Patogênico" if especie in PATOGENICOS else ("Comensal" if especie in COMENSAIS else "Não classificado")
+        todos_rows.append({
+            "especie": especie,
+            "categoria": categoria,
+            "dominio": "Fecal + Lâmina",
+            "n": n,
+            "prevalencia": pct(n, base_n),
+            "base_n": base_n,
+            "metodos": metodos_by_especie.get(especie, ""),
+        })
+
     todos_parasitos_resumo = pd.DataFrame(todos_rows).sort_values("prevalencia", ascending=False).reset_index(drop=True) \
         if todos_rows else pd.DataFrame(columns=["especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos"])
     if not todos_parasitos_resumo.empty:
