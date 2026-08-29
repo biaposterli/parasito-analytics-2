@@ -320,13 +320,63 @@ if uploaded_file is not None:
             cat_df["%"] = (100 * cat_df["n_criancas"] / metrics["total"]).round(1)
             st.dataframe(cat_df, width='stretch')
 
-            # ---- prevalência por espécie ----
+            # ---- prevalência de todos os parasitos (fecal + Graham/lâmina, unificado) ----
+            st.write("")
+            st.markdown("#### Prevalência de todos os parasitos")
+            st.caption(
+                "Reúne, num só gráfico, as espécies encontradas por métodos fecais (HPJ, "
+                "Willis, Baermann-Picanço) e por Graham/lâmina. Como as bases de cálculo são "
+                "diferentes por domínio — fecal usa como denominador as crianças com resultado "
+                "fecal conclusivo, e Enterobius (Graham) usa as crianças com Graham conclusivo — "
+                "a tabela abaixo do gráfico mostra o denominador (Base N) e o(s) método(s) que "
+                "detectou(aram) cada espécie."
+            )
+            colT, colU = st.columns([3, 2])
+            with colT:
+                if not metrics["todos_parasitos_resumo"].empty:
+                    fig_all = px.bar(
+                        metrics["todos_parasitos_resumo"].sort_values("prevalencia"),
+                        x="prevalencia", y="especie", orientation="h",
+                        color="categoria",
+                        color_discrete_map={"Patogênico": BRICK, "Comensal": AMBER, "Não classificado": SAGE},
+                        pattern_shape="dominio",
+                        labels={"prevalencia": "Prevalência (%)", "especie": "", "dominio": "Amostra"},
+                        hover_data={"metodos": True, "base_n": True, "n": True},
+                    )
+                    fig_all.update_layout(**PLOTLY_LAYOUT, showlegend=True, legend_title="")
+                    st.plotly_chart(fig_all, width='stretch')
+                else:
+                    st.info("Nenhum parasito detectado nesta base.")
+            with colU:
+                todos_display = metrics["todos_parasitos_resumo"].rename(columns={
+                    "especie": "Espécie", "categoria": "Categoria", "dominio": "Amostra",
+                    "n": "N", "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)",
+                })
+                st.dataframe(todos_display, width='stretch', hide_index=True)
+
+            st.write("")
+            st.markdown("##### Prevalência por método diagnóstico e espécie")
+            st.caption(
+                "Cada célula mostra a prevalência (%) daquela espécie especificamente pelo "
+                "método indicado, com denominador = crianças com resultado conclusivo NAQUELE "
+                "método. Uma mesma espécie pode aparecer em mais de um método fecal (ex.: um "
+                "ovo de helminto pode ser visto tanto no HPJ quanto no Willis)."
+            )
+            if not metrics["metodo_especie_resumo"].empty:
+                pivot = metrics["metodo_especie_resumo"].pivot_table(
+                    index="especie", columns="metodo", values="prevalencia", aggfunc="first",
+                ).reindex(columns=["Graham", "HPJ", "Willis", "Baermann-Picanço"])
+                st.dataframe(pivot, width='stretch')
+            else:
+                st.info("Nenhum dado suficiente para o cruzamento método x espécie.")
+
+            # ---- prevalência por espécie (só fecal, detalhe) ----
             st.write("")
             st.markdown("#### Prevalência por espécie — métodos fecais (base: fezes com resultado conclusivo)")
             st.caption(
                 "Enterobius vermicularis (detectado pelo Graham/lâmina) não entra nesta tabela — "
-                "sua prevalência tem base amostral diferente e aparece na tabela de comparação de "
-                "métodos, logo abaixo."
+                "sua prevalência tem base amostral diferente e já aparece no gráfico unificado "
+                "acima."
             )
             colA, colB = st.columns([3, 2])
             with colA:
@@ -449,7 +499,8 @@ if uploaded_file is not None:
             # ---- exportar excel ----
             def generate_report_excel_bytes(m: dict) -> bytes:
                 buf = io.BytesIO()
-                list_cols = ["especies", "especies_fecais", "especies_lamina"]
+                list_cols = ["especies", "especies_fecais", "especies_lamina",
+                             "especies_Graham", "especies_Baermann-Picanço", "especies_HPJ", "especies_Willis"]
                 with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                     m["por_crianca"].drop(columns=[c for c in list_cols if c in m["por_crianca"].columns]).to_excel(
                         writer, sheet_name="Base_por_Crianca", index=False
@@ -462,7 +513,9 @@ if uploaded_file is not None:
                         {"metrica": "Inconclusivas — fezes (amostra insuficiente em tudo)", "valor_pct": None, "n_criancas": len(m["fecal_inconclusivo"])},
                         {"metrica": "Inconclusivas — só lâmina", "valor_pct": None, "n_criancas": len(m["lamina_only_inconclusivo"])},
                     ]).to_excel(writer, sheet_name="Prevalencia_Geral", index=False)
+                    m["todos_parasitos_resumo"].to_excel(writer, sheet_name="Todos_os_Parasitos", index=False)
                     m["especies_resumo"].to_excel(writer, sheet_name="Prevalencia_por_Especie", index=False)
+                    m["metodo_especie_resumo"].to_excel(writer, sheet_name="Prevalencia_Metodo_x_Especie", index=False)
                     pd.DataFrame([
                         {"categoria": "Negativo", "n": m["neg"]},
                         {"categoria": "Monoparasitismo", "n": m["mono"]},
