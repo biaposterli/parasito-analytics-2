@@ -6,6 +6,8 @@ sem dependências de sistema — rodam sem problemas no Streamlit Community Clou
 import io
 from datetime import datetime
 
+import pandas as pd
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -124,8 +126,12 @@ def _chart_metodos(metodos_df):
     fig, ax = plt.subplots(figsize=(6.2, 3))
     ax.bar(metodos_df["metodo"], metodos_df["prevalencia"], color=MPL_TEAL)
     ax.set_ylabel("Prevalência (%)")
+    # eixo fixo em 0-105%: evita que o rótulo de texto (v + 0.5) fique fora da
+    # área visível quando TODAS as prevalências são 0% (domínio all-negative),
+    # o que antes inflava desproporcionalmente a imagem via bbox_inches="tight"
+    ax.set_ylim(0, 105)
     for i, v in enumerate(metodos_df["prevalencia"]):
-        ax.text(i, v + 0.5, f"{v}%", ha="center", fontsize=8)
+        ax.text(i, v + 2, f"{v}%", ha="center", fontsize=8)
     fig.tight_layout()
     return _fig_to_image(fig)
 
@@ -137,8 +143,11 @@ def _chart_ncoletas(efeito_df):
     labels = [f"{int(r.n_potes_entregues)} pote(s)\nn={int(r.n_criancas)}" for r in efeito_df.itertuples()]
     ax.bar(labels, efeito_df["prevalencia"], color=MPL_TEAL_DARK)
     ax.set_ylabel("Prevalência (%)")
+    # mesmo racional do _chart_metodos: eixo fixo evita estouro do bbox quando
+    # todos os subgrupos têm 0% de prevalência.
+    ax.set_ylim(0, 105)
     for i, v in enumerate(efeito_df["prevalencia"]):
-        ax.text(i, v + 0.5, f"{v}%", ha="center", fontsize=8)
+        ax.text(i, v + 2, f"{v}%", ha="center", fontsize=8)
     fig.tight_layout()
     return _fig_to_image(fig)
 
@@ -151,8 +160,12 @@ def _chart_cumulativa(cum_df):
     ax.set_xlabel("Nº de potes considerados (cumulativo)")
     ax.set_ylabel("Prevalência cumulativa (%)")
     ax.set_xticks(cum_df["k"])
+    # eixo fixo em 0-105%, mesmo racional das outras funções _chart_*: evita que
+    # o rótulo de texto acima do ponto estoure o bbox quando a prevalência
+    # cumulativa é 0% (ou quando há um único ponto, k=1).
+    ax.set_ylim(0, 105)
     for x, v in zip(cum_df["k"], cum_df["prevalencia_cumulativa"]):
-        ax.text(x, v + 1.5, f"{v}%", ha="center", fontsize=8)
+        ax.text(x, v + 3, f"{v}%", ha="center", fontsize=8)
     fig.tight_layout()
     return _fig_to_image(fig)
 
@@ -182,6 +195,11 @@ def _stat_table(metrics):
         ["PREVALÊNCIA — AMOSTRA FECAL", "PREVALÊNCIA — SÓ LÂMINA", "PREVALÊNCIA COMBINADA"],
         [f"{metrics['prev_fecal']:.1f}%", f"{metrics['prev_lamina']:.1f}%", f"{metrics['prev_combinada']:.1f}%"],
         [
+            f"IC95% {_ic_texto(metrics['prev_fecal_ic95_inf'], metrics['prev_fecal_ic95_sup'])}",
+            f"IC95% {_ic_texto(metrics['prev_lamina_ic95_inf'], metrics['prev_lamina_ic95_sup'])}",
+            f"IC95% {_ic_texto(metrics['prev_combinada_ic95_inf'], metrics['prev_combinada_ic95_sup'])}",
+        ],
+        [
             f"{int(metrics['fecal_conclusivo']['positivo_fecal'].sum())} de {len(metrics['fecal_conclusivo'])} crianças (conclusivas)",
             f"{int(metrics['lamina_only_conclusivo']['positivo_lamina'].sum())} de {len(metrics['lamina_only_conclusivo'])} crianças (conclusivas)",
             f"{int(metrics['combinada_base']['positivo_algum_metodo'].sum())} de {len(metrics['combinada_base'])} crianças (conclusivas)",
@@ -197,7 +215,10 @@ def _stat_table(metrics):
         ("TEXTCOLOR", (0, 1), (-1, 1), TEAL_DARK),
         ("FONTNAME", (0, 2), (-1, 2), "Helvetica"),
         ("FONTSIZE", (0, 2), (-1, 2), 8),
-        ("TEXTCOLOR", (0, 2), (-1, 2), colors.HexColor("#7C8B81")),
+        ("TEXTCOLOR", (0, 2), (-1, 2), TEAL),
+        ("FONTNAME", (0, 3), (-1, 3), "Helvetica"),
+        ("FONTSIZE", (0, 3), (-1, 3), 8),
+        ("TEXTCOLOR", (0, 3), (-1, 3), colors.HexColor("#7C8B81")),
         ("BOX", (0, 0), (0, -1), 0.7, LINE),
         ("BOX", (1, 0), (1, -1), 0.7, LINE),
         ("BOX", (2, 0), (2, -1), 0.7, LINE),
@@ -207,6 +228,27 @@ def _stat_table(metrics):
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     return t
+
+
+def _ic_texto(inf, sup):
+    """Formata um par (limite_inferior, limite_superior) de IC95% como texto curto
+    para caber em tabela do PDF. Retorna travessão quando não calculável (n=0)."""
+    if inf is None or sup is None or pd.isna(inf) or pd.isna(sup):
+        return "—"
+    return f"{inf:.1f}–{sup:.1f}%"
+
+
+def _with_ic_column(df, prev_col="prevalencia", inf_col="ic95_inf", sup_col="ic95_sup", label="ic95"):
+    """Devolve cópia do DataFrame com uma coluna de texto 'IC 95%' combinando os
+    limites de Wilson, no lugar das duas colunas numéricas ic95_inf/ic95_sup —
+    mantém a tabela do PDF compacta o bastante para caber na largura da página."""
+    out = df.copy()
+    if inf_col in out.columns and sup_col in out.columns:
+        out[label] = [
+            _ic_texto(i, s) for i, s in zip(out[inf_col], out[sup_col])
+        ]
+        out = out.drop(columns=[inf_col, sup_col])
+    return out
 
 
 def _df_table(df, col_labels=None, col_widths=None, max_rows=None):
@@ -322,11 +364,11 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     if todos_img:
         story.append(todos_img)
         story.append(Spacer(1, 2 * mm))
-    todos_table = metrics["todos_parasitos_resumo"].rename(columns={
+    todos_table = _with_ic_column(metrics["todos_parasitos_resumo"]).rename(columns={
         "especie": "Espécie", "categoria": "Categoria", "dominio": "Amostra", "n": "N",
-        "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)",
+        "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)", "ic95": "IC 95%",
     })
-    story.append(_df_table(todos_table, col_widths=[38 * mm, 20 * mm, 24 * mm, 12 * mm, 22 * mm, 16 * mm, 36 * mm]))
+    story.append(_df_table(todos_table, col_widths=[32 * mm, 18 * mm, 20 * mm, 10 * mm, 18 * mm, 14 * mm, 28 * mm, 20 * mm]))
 
     # ---- prevalência por método e espécie ----
     story.append(Paragraph("Prevalência por método diagnóstico e espécie", styles["h2"]))
@@ -344,6 +386,17 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
         pivot_df = pivot.reset_index().rename(columns={"especie": "Espécie"})
         pivot_df = pivot_df.fillna("—")
         story.append(_df_table(pivot_df, col_widths=[50 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm]))
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(
+            "Intervalos de confiança de 95% (Wilson) correspondentes a cada célula acima:",
+            styles["small"],
+        ))
+        story.append(Spacer(1, 1 * mm))
+        me_table = _with_ic_column(metrics["metodo_especie_resumo"]).rename(columns={
+            "metodo": "Método", "especie": "Espécie", "n": "N",
+            "prevalencia": "Prevalência %", "categoria": "Categoria", "ic95": "IC 95%",
+        })
+        story.append(_df_table(me_table, col_widths=[25 * mm, 40 * mm, 12 * mm, 22 * mm, 25 * mm, 26 * mm]))
     else:
         story.append(Paragraph("Sem dados suficientes para este cruzamento.", styles["body"]))
 
@@ -359,10 +412,10 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     if esp_img:
         story.append(esp_img)
         story.append(Spacer(1, 2 * mm))
-    esp_table = metrics["especies_resumo"].rename(
-        columns={"especie": "Espécie", "n": "N", "prevalencia": "Prevalência %", "categoria": "Categoria"}
+    esp_table = _with_ic_column(metrics["especies_resumo"]).rename(
+        columns={"especie": "Espécie", "n": "N", "prevalencia": "Prevalência %", "categoria": "Categoria", "ic95": "IC 95%"}
     )
-    story.append(_df_table(esp_table, col_widths=[60 * mm, 20 * mm, 30 * mm, 30 * mm]))
+    story.append(_df_table(esp_table, col_widths=[52 * mm, 16 * mm, 24 * mm, 24 * mm, 24 * mm]))
 
     # ---- poliparasitismo ----
     story.append(Paragraph("Mono x poliparasitismo (base: espécies de origem fecal)", styles["h2"]))
@@ -387,12 +440,49 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     if met_img:
         story.append(met_img)
         story.append(Spacer(1, 2 * mm))
-    met_table = metrics["metodos_resumo"].rename(columns={
+    met_table = _with_ic_column(metrics["metodos_resumo"]).rename(columns={
         "metodo": "Método", "amostra_biologica": "Amostra", "n_criancas_testaveis": "Testáveis",
         "n_criancas_positivas": "Positivas", "n_criancas_inconclusivas": "Inconclusivas",
-        "prevalencia": "Prevalência %",
+        "prevalencia": "Prevalência %", "ic95": "IC 95%",
     })
-    story.append(_df_table(met_table, col_widths=[28 * mm, 25 * mm, 20 * mm, 20 * mm, 22 * mm, 25 * mm]))
+    story.append(_df_table(met_table, col_widths=[24 * mm, 20 * mm, 16 * mm, 16 * mm, 18 * mm, 20 * mm, 22 * mm]))
+
+    story.append(Spacer(1, 3 * mm))
+    subsection_style = ParagraphStyle(
+        "lp_h3_inline", parent=styles["h2"], fontSize=11.5, spaceBefore=6, spaceAfter=4,
+    )
+    story.append(Paragraph("HPJ x Willis — teste de McNemar", subsection_style))
+    mc = metrics["mcnemar_hpj_willis"]
+    if mc["n_pareado"] == 0 or mc["tabela"] is None:
+        story.append(Paragraph(
+            "Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente — teste não calculado.",
+            styles["body"],
+        ))
+    else:
+        tb = mc["tabela"]
+        story.append(Paragraph(
+            "Compara os dois métodos aplicados à mesma amostra de fezes da mesma criança (dados "
+            "pareados), usando só as crianças em que os dois métodos discordaram entre si.",
+            styles["small"],
+        ))
+        story.append(Spacer(1, 1.5 * mm))
+        mc_table_data = pd.DataFrame(
+            [["HPJ +", tb["pp"], tb["pn"]], ["HPJ −", tb["np"], tb["nn"]]],
+            columns=["", "Willis +", "Willis −"],
+        )
+        story.append(_df_table(mc_table_data, col_widths=[30 * mm, 30 * mm, 30 * mm]))
+        story.append(Spacer(1, 2 * mm))
+        metodo_label = {
+            "exato": "teste exato (< 25 discordâncias)",
+            "chi2_corrigido": "qui-quadrado com correção de continuidade",
+            "sem_discordancia": "sem discordâncias — nada a testar",
+        }.get(mc["metodo"], mc["metodo"])
+        story.append(Paragraph(
+            f"n pareado = {mc['n_pareado']} &middot; {tb['pn'] + tb['np']} discordância(s) "
+            f"({tb['pn']} HPJ+/Willis−, {tb['np']} HPJ−/Willis+) &middot; {metodo_label} "
+            f"&middot; <b>p-valor = {mc['p_valor']:.4f}</b>.",
+            styles["body"],
+        ))
 
     # ---- efeito n coletas ----
     story.append(Paragraph("Efeito do número de potes de fezes entregues", styles["h2"]))
@@ -405,6 +495,15 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     nc_img = _chart_ncoletas(metrics["efeito_n_coletas"])
     if nc_img:
         story.append(nc_img)
+
+    ca = metrics["cochran_armitage_efeito_coletas"]
+    if ca["p_valor"] is not None:
+        story.append(Spacer(1, 1.5 * mm))
+        story.append(Paragraph(
+            f"Teste de tendência de Cochran-Armitage: Z = {ca['estatistica_z']:.3f}, "
+            f"p-valor = {ca['p_valor']:.4f} ({ca['n_grupos']} grupos). {ca['aviso']}",
+            styles["small"],
+        ))
 
     # ---- curva cumulativa ----
     if not metrics["fecal_cumulativa"].empty:
