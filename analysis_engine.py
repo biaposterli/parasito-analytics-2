@@ -1,6 +1,23 @@
-"""Motor de análise epidemiológica — LaPaHV (v2)
+"""Motor de análise epidemiológica — LaPaHV (v3)
 
-Correções em relação à v1:
+Alterações da v2 -> v3:
+  7) Acrescentadas medidas de incerteza e testes de hipótese, que faltavam
+     completamente na v2 (só havia estatística descritiva — frequências e
+     prevalências em %):
+       - Intervalo de Confiança de 95% (método de Wilson) para TODAS as
+         prevalências reportadas (prev_fecal, prev_lamina, prev_combinada,
+         especies_resumo, metodos_resumo, metodo_especie_resumo,
+         todos_parasitos_resumo).
+       - Teste de McNemar (dados pareados) comparando HPJ x Willis.
+       - Teste de tendência de Cochran-Armitage para a série "efeito do nº
+         de potes entregues" (com aviso explícito de que essa comparação é
+         entre SUBGRUPOS diferentes de crianças, sujeita a viés de seleção —
+         a leitura sem esse viés continua sendo a curva cumulativa).
+     Todos os testes são implementados "do zero", sem depender de scipy ou
+     statsmodels (que não são dependências atuais do projeto — ver
+     requirements.txt), usando apenas math/numpy.
+
+Correções mantidas da v1 -> v2:
   1) prev_fecal deixa de contar como "positiva" uma criança cujo único achado veio da
      lâmina (Graham) — agora usa exclusivamente os métodos fecais (HPJ, Willis,
      Baermann-Picanço).
@@ -26,6 +43,7 @@ Correções em relação à v1:
      E. dispar (comensal) não é possível no laboratório, todo achado desse complexo
      precisa ser tratado clinicamente como potencialmente patogênico.
 """
+import math
 import re
 import unicodedata
 import pandas as pd
@@ -160,6 +178,229 @@ def validate_columns(df: pd.DataFrame):
     if missing:
         return [f"Colunas ausentes: {', '.join(missing)}. Baixe o modelo novamente e confira os cabeçalhos."]
     return []
+
+
+# ======================================================================
+# ESTATÍSTICA INFERENCIAL — IC95% (Wilson) e testes de hipótese
+# ======================================================================
+#
+# Por que Wilson e não a aproximação normal (Wald)?
+# A aproximação normal (p ± 1.96*sqrt(p(1-p)/n)) fica ruim (limites fora de
+# [0,100], cobertura real abaixo do nominal) exatamente nos cenários mais
+# comuns aqui: n pequeno (subgrupos de "só lâmina", ou "n de discordância" do
+# McNemar) e proporções perto de 0% ou 100% (várias espécies têm prevalência
+# baixa). O Wilson score interval não tem esses dois problemas e é o método
+# recomendado por padrão para proporções binomiais em epidemiologia.
+
+_Z95 = 1.959963984540054  # quantil normal padrão para IC de 95% (bicaudal)
+
+
+def wilson_ci(positivos, n, z=_Z95):
+    """Intervalo de Confiança de Wilson para uma proporção binomial.
+
+    Fórmula fechada (Wilson, 1927):
+        centro = (p + z²/2n) / (1 + z²/n)
+        margem = z * sqrt(p(1-p)/n + z²/4n²) / (1 + z²/n)
+        IC = centro ± margem
+
+    Onde p = positivos/n. Diferente do intervalo de Wald (p ± z*erro-padrão),
+    o Wilson não assume simetria em torno de p e nunca extrapola [0, 1] —
+    por isso é preferível quando n é pequeno ou p está perto de 0 ou 1,
+    situação comum neste estudo (espécies raras, subgrupos pequenos).
+
+    Retorna uma tupla (limite_inferior_%, limite_superior_%) já em
+    percentual e arredondada a 1 casa decimal, ou (None, None) se n=0
+    (denominador vazio — sem base para estimar incerteza).
+    """
+    if n is None or n == 0 or pd.isna(n):
+        return (None, None)
+    n = int(n)
+    positivos = int(positivos)
+    p = positivos / n
+    denom = 1 + (z ** 2) / n
+    centro = p + (z ** 2) / (2 * n)
+    margem = z * math.sqrt((p * (1 - p) / n) + (z ** 2) / (4 * n ** 2))
+    lo = (centro - margem) / denom
+    hi = (centro + margem) / denom
+    lo = max(0.0, lo)
+    hi = min(1.0, hi)
+    return (round(100 * lo, 1), round(100 * hi, 1))
+
+
+def _wilson_ci_pairs(numeradores, denominadores):
+    """Aplica wilson_ci em paralelo a duas sequências (numerador, denominador) e
+    devolve duas listas prontas para virar colunas 'ic95_inf' / 'ic95_sup'."""
+    los, his = [], []
+    for num, den in zip(numeradores, denominadores):
+        lo, hi = wilson_ci(num, den)
+        los.append(lo)
+        his.append(hi)
+    return los, his
+
+
+def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
+    """Teste de McNemar comparando os métodos diagnósticos HPJ e Willis.
+
+    Racional: HPJ e Willis são aplicados à MESMA amostra de fezes da mesma
+    criança — são medidas PAREADAS, não duas amostras independentes. Um
+    qui-quadrado de independência (ou teste de proporções para amostras
+    independentes) estaria errado aqui, pois ignoraria o pareamento e
+    infla o erro tipo I. O McNemar usa só as células DISCORDANTES da tabela
+    2x2 (criança positiva num método e negativa no outro) para testar se as
+    duas taxas de detecção diferem.
+
+    Base: crianças com resultado CONCLUSIVO (positivo ou negativo, nunca
+    "amostra insuficiente"/inconclusivo) em AMBOS os métodos — interseção,
+    não união, para manter o pareamento válido.
+
+    Tabela 2x2 (contagens de crianças):
+                         Willis +      Willis -
+        HPJ +               pp            pn
+        HPJ -               np            nn
+
+    Estatística:
+      - Se nº de discordâncias (pn + np) < 25: teste EXATO binomial (mais
+        robusto para amostras pequenas — comum neste tipo de estudo).
+            p = 2 * P(X <= min(pn, np))   com X ~ Binomial(pn+np, 0.5)
+      - Caso contrário: aproximação qui-quadrado com correção de
+        continuidade de Yates:
+            χ² = (|pn - np| - 1)² / (pn + np),  1 grau de liberdade
+        Como χ²(1 g.l.) é o quadrado de uma Normal(0,1), o p-valor é obtido
+        via função erro complementar: p = erfc(sqrt(χ²/2)).
+
+    Retorna None nos campos numéricos se não houver crianças pareadas
+    suficientes (n_pareado = 0), para não quebrar o pipeline.
+    """
+    if por_crianca.empty or "status_HPJ" not in por_crianca.columns or "status_Willis" not in por_crianca.columns:
+        return {"n_pareado": 0, "tabela": None, "estatistica": None, "p_valor": None, "metodo": None}
+
+    base = por_crianca[
+        por_crianca["status_HPJ"].isin(["positivo", "negativo"])
+        & por_crianca["status_Willis"].isin(["positivo", "negativo"])
+    ]
+    n = len(base)
+    if n == 0:
+        return {"n_pareado": 0, "tabela": None, "estatistica": None, "p_valor": None, "metodo": None}
+
+    hpj_pos = base["status_HPJ"] == "positivo"
+    willis_pos = base["status_Willis"] == "positivo"
+
+    pp = int((hpj_pos & willis_pos).sum())
+    pn = int((hpj_pos & ~willis_pos).sum())
+    np_ = int((~hpj_pos & willis_pos).sum())
+    nn = int((~hpj_pos & ~willis_pos).sum())
+
+    n_disc = pn + np_  # crianças em que os dois métodos discordam
+
+    if n_disc == 0:
+        # Concordância perfeita entre os dois métodos nesta amostra — nada a testar,
+        # não há evidência de diferença (nem poderia haver).
+        return {
+            "n_pareado": n,
+            "tabela": {"pp": pp, "pn": pn, "np": np_, "nn": nn},
+            "estatistica": 0.0,
+            "p_valor": 1.0,
+            "metodo": "sem_discordancia",
+        }
+
+    if n_disc < 25:
+        k = min(pn, np_)
+        p_valor = 2 * sum(math.comb(n_disc, i) for i in range(0, k + 1)) * (0.5 ** n_disc)
+        p_valor = min(1.0, p_valor)
+        estatistica = float(k)
+        metodo = "exato"
+    else:
+        estatistica = ((abs(pn - np_) - 1) ** 2) / n_disc
+        p_valor = math.erfc(math.sqrt(estatistica / 2))
+        metodo = "chi2_corrigido"
+
+    return {
+        "n_pareado": n,
+        "tabela": {"pp": pp, "pn": pn, "np": np_, "nn": nn},
+        "estatistica": round(estatistica, 4),
+        "p_valor": round(p_valor, 4),
+        "metodo": metodo,
+    }
+
+
+def cochran_armitage_trend(grupos: pd.DataFrame) -> dict:
+    """Teste de tendência de Cochran-Armitage.
+
+    Testa se a proporção de positivos cresce (ou decresce) linearmente
+    conforme uma variável ordinal aumenta — aqui, o número de potes de
+    fezes entregues (1, 2, 3...). É o teste correto para "existe
+    tendência?" em dados de proporção por grupos ordenados; um
+    qui-quadrado de independência comum testaria só "as proporções são
+    diferentes?", sem usar a ordem dos grupos (perde poder estatístico
+    quando a hipótese de interesse é especificamente uma tendência).
+
+    Espera um DataFrame com colunas 'n_potes_entregues' (score/nível
+    ordinal, usado como t_i), 'n_criancas' (n_i) e 'n_positivos' (x_i) —
+    contagens EXATAS, não prevalência em % já arredondada.
+
+    Estatística (aproximação normal):
+        p̄ = ΣX / ΣN
+        t̄ = Σ(n_i·t_i) / ΣN
+        T  = Σ x_i·(t_i - t̄)
+        Var(T) = p̄(1-p̄) · Σ n_i·(t_i - t̄)²
+        Z = T / sqrt(Var(T))          ~ N(0,1) sob H0 (sem tendência)
+        p-valor bicaudal = erfc(|Z| / sqrt(2))
+
+    IMPORTANTE — limite deste teste (ver docstring de
+    build_fecal_cumulative_curve): os grupos aqui são SUBGRUPOS diferentes
+    de crianças (quem entregou 1, 2 ou 3 potes), não medidas repetidas na
+    mesma criança. Uma tendência estatisticamente significativa pode
+    refletir viés de seleção (ex.: crianças que entregam mais potes podem
+    ser sistematicamente diferentes) tanto quanto um efeito real do número
+    de coletas. A leitura sem esse viés é a curva cumulativa
+    (fecal_cumulativa), que dispensa este teste por ser medida repetida no
+    mesmo grupo.
+    """
+    aviso = (
+        "Compara SUBGRUPOS diferentes de crianças (quem entregou 1, 2 ou 3 potes) — "
+        "sujeito a viés de seleção. A leitura mais confiável do ganho por coleta "
+        "adicional é a curva cumulativa (fecal_cumulativa), medida repetida no mesmo "
+        "grupo de crianças, que não depende deste teste."
+    )
+    if grupos.empty or len(grupos) < 2:
+        return {
+            "estatistica_z": None, "p_valor": None, "n_grupos": len(grupos),
+            "aviso": aviso,
+        }
+
+    t = grupos["n_potes_entregues"].astype(float).to_numpy()
+    n_i = grupos["n_criancas"].astype(float).to_numpy()
+    x_i = grupos["n_positivos"].astype(float).to_numpy()
+
+    N = n_i.sum()
+    X = x_i.sum()
+    if N == 0 or X == 0 or X == N:
+        # sem variabilidade (0% ou 100% positivos no total) — tendência não
+        # calculável de forma estável.
+        return {
+            "estatistica_z": None, "p_valor": None, "n_grupos": len(grupos),
+            "aviso": aviso,
+        }
+
+    p_bar = X / N
+    t_bar = float((n_i * t).sum() / N)
+    T = float((x_i * (t - t_bar)).sum())
+    var_T = p_bar * (1 - p_bar) * float((n_i * (t - t_bar) ** 2).sum())
+    if var_T <= 0:
+        return {
+            "estatistica_z": None, "p_valor": None, "n_grupos": len(grupos),
+            "aviso": aviso,
+        }
+
+    z = T / math.sqrt(var_T)
+    p_valor = math.erfc(abs(z) / math.sqrt(2))
+
+    return {
+        "estatistica_z": round(z, 4),
+        "p_valor": round(p_valor, 4),
+        "n_grupos": len(grupos),
+        "aviso": aviso,
+    }
 
 
 def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
@@ -353,17 +594,17 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
         "Fezes e lâmina", "Apenas fezes (sem lâmina)", "Apenas lâmina (sem fezes)", "Nenhum material",
     ])
     empty_child = por_crianca  # já vem com as colunas certas, só sem linhas
-    empty_especies = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria"])
+    empty_especies = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria", "ic95_inf", "ic95_sup"])
     empty_combos = pd.DataFrame(columns=["combinacao", "n"])
     empty_metodos = pd.DataFrame(columns=[
         "metodo", "amostra_biologica", "n_criancas_testaveis", "n_criancas_positivas",
-        "n_criancas_inconclusivas", "prevalencia",
+        "n_criancas_inconclusivas", "prevalencia", "ic95_inf", "ic95_sup",
     ])
-    empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "prevalencia"])
+    empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "n_positivos", "prevalencia"])
     empty_cumulativa = pd.DataFrame(columns=["k", "n_criancas", "prevalencia_cumulativa"])
-    empty_metodo_especie = pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria"])
+    empty_metodo_especie = pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria", "ic95_inf", "ic95_sup"])
     empty_todos_parasitos = pd.DataFrame(columns=[
-        "especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos",
+        "especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos", "ic95_inf", "ic95_sup",
     ])
     return {
         "por_crianca": empty_child,
@@ -379,8 +620,14 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
         "combinada_inconclusiva": empty_child,
         "cat_counts": empty_cat,
         "prev_fecal": 0.0,
+        "prev_fecal_ic95_inf": None,
+        "prev_fecal_ic95_sup": None,
         "prev_lamina": 0.0,
+        "prev_lamina_ic95_inf": None,
+        "prev_lamina_ic95_sup": None,
         "prev_combinada": 0.0,
+        "prev_combinada_ic95_inf": None,
+        "prev_combinada_ic95_sup": None,
         "especies_resumo": empty_especies,
         "poli": 0, "mono": 0, "neg": 0,
         "combos_resumo": empty_combos,
@@ -389,6 +636,8 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
         "fecal_cumulativa": empty_cumulativa,
         "metodo_especie_resumo": empty_metodo_especie,
         "todos_parasitos_resumo": empty_todos_parasitos,
+        "mcnemar_hpj_willis": mcnemar_hpj_willis(empty_child),
+        "cochran_armitage_efeito_coletas": cochran_armitage_trend(empty_efeito),
     }
 
 
@@ -428,6 +677,17 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     prev_lamina = pct(lamina_only_conclusivo["positivo_lamina"].sum(), len(lamina_only_conclusivo))
     prev_combinada = pct(combinada_base["positivo_algum_metodo"].sum(), len(combinada_base))
 
+    # ---- IC95% (Wilson) das três prevalências principais ----
+    prev_fecal_ic95_inf, prev_fecal_ic95_sup = wilson_ci(
+        fecal_conclusivo["positivo_fecal"].sum(), len(fecal_conclusivo)
+    )
+    prev_lamina_ic95_inf, prev_lamina_ic95_sup = wilson_ci(
+        lamina_only_conclusivo["positivo_lamina"].sum(), len(lamina_only_conclusivo)
+    )
+    prev_combinada_ic95_inf, prev_combinada_ic95_sup = wilson_ci(
+        combinada_base["positivo_algum_metodo"].sum(), len(combinada_base)
+    )
+
     # ---- prevalência por espécie — só espécies de origem FECAL (HPJ/Willis/BP).
     # Enterobius (Graham/lâmina) já é reportado, com denominador próprio e correto,
     # em metodos_resumo.
@@ -443,8 +703,11 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             }
             for e, n in especie_count.items()
         ]).sort_values("n", ascending=False).reset_index(drop=True)
+        ic_inf, ic_sup = _wilson_ci_pairs(especies_resumo["n"], [len(fecal_conclusivo)] * len(especies_resumo))
+        especies_resumo["ic95_inf"] = ic_inf
+        especies_resumo["ic95_sup"] = ic_sup
     else:
-        especies_resumo = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria"])
+        especies_resumo = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria", "ic95_inf", "ic95_sup"])
 
     # ---- mono/poliparasitismo — restrito a espécies fecais, base = fecal_conclusivo
     poli = int((fecal_conclusivo["n_especies_distintas_fecais"] > 1).sum())
@@ -458,6 +721,9 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     combos_resumo = pd.DataFrame(
         [{"combinacao": k, "n": v} for k, v in combos_count.items()]
     ).sort_values("n", ascending=False).reset_index(drop=True) if combos_count else pd.DataFrame(columns=["combinacao", "n"])
+    # Nota: sem teste de hipótese aqui de propósito — os n das combinações (1-6,
+    # tipicamente) são baixos demais para qualquer teste ter poder estatístico
+    # relevante. Mantido como contagem bruta descritiva.
 
     # ---- comparação de métodos — denominador = crianças com status CONCLUSIVO
     # naquele método específico (exclui quem só teve "amostra insuficiente" nesse
@@ -477,6 +743,9 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             "prevalencia": pct(positivos, len(conclusivos)),
         })
     metodos_resumo = pd.DataFrame(metodos_rows)
+    ic_inf, ic_sup = _wilson_ci_pairs(metodos_resumo["n_criancas_positivas"], metodos_resumo["n_criancas_testaveis"])
+    metodos_resumo["ic95_inf"] = ic_inf
+    metodos_resumo["ic95_sup"] = ic_sup
 
     # ---- prevalência por espécie x método — para cada método, denominador =
     # crianças com resultado conclusivo NAQUELE método (mesma base de
@@ -501,6 +770,15 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             })
     metodo_especie_resumo = pd.DataFrame(metodo_especie_rows) if metodo_especie_rows else \
         pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria"])
+    if not metodo_especie_resumo.empty:
+        den_by_metodo = dict(zip(metodos_resumo["metodo"], metodos_resumo["n_criancas_testaveis"]))
+        dens = [den_by_metodo.get(m, 0) for m in metodo_especie_resumo["metodo"]]
+        ic_inf, ic_sup = _wilson_ci_pairs(metodo_especie_resumo["n"], dens)
+        metodo_especie_resumo["ic95_inf"] = ic_inf
+        metodo_especie_resumo["ic95_sup"] = ic_sup
+    else:
+        metodo_especie_resumo["ic95_inf"] = pd.Series(dtype=float)
+        metodo_especie_resumo["ic95_sup"] = pd.Series(dtype=float)
 
     # ---- prevalência de TODOS os parasitos (fecais + Graham/lâmina), unificada
     # numa só tabela, indicando por qual(is) método(s) cada espécie foi detectada.
@@ -545,6 +823,13 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         })
     todos_parasitos_resumo = pd.DataFrame(todos_rows).sort_values("prevalencia", ascending=False).reset_index(drop=True) \
         if todos_rows else pd.DataFrame(columns=["especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos"])
+    if not todos_parasitos_resumo.empty:
+        ic_inf, ic_sup = _wilson_ci_pairs(todos_parasitos_resumo["n"], todos_parasitos_resumo["base_n"])
+        todos_parasitos_resumo["ic95_inf"] = ic_inf
+        todos_parasitos_resumo["ic95_sup"] = ic_sup
+    else:
+        todos_parasitos_resumo["ic95_inf"] = pd.Series(dtype=float)
+        todos_parasitos_resumo["ic95_sup"] = pd.Series(dtype=float)
 
     # ---- efeito do nº de potes — corrigido para usar só positividade FECAL
     # (antes misturava achado de lâmina) e restrito a quem teve resultado fecal
@@ -552,15 +837,21 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     # fecal_cumulativa para a versão sem viés de seleção entre subgrupos.
     efeito_rows = []
     for n_pote, g in fecal_conclusivo.groupby("n_coletas_pote_entregue"):
+        n_pos = int(g["positivo_fecal"].sum())
         efeito_rows.append({
             "n_potes_entregues": int(n_pote),
             "n_criancas": len(g),
-            "prevalencia": pct(g["positivo_fecal"].sum(), len(g)),
+            "n_positivos": n_pos,
+            "prevalencia": pct(n_pos, len(g)),
         })
     efeito_n_coletas = pd.DataFrame(efeito_rows).sort_values("n_potes_entregues").reset_index(drop=True) \
-        if efeito_rows else pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "prevalencia"])
+        if efeito_rows else pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "n_positivos", "prevalencia"])
 
     fecal_cumulativa = build_fecal_cumulative_curve(df)
+
+    # ---- testes de hipótese ----
+    mcnemar_hpj_willis_res = mcnemar_hpj_willis(por_crianca)
+    cochran_armitage_res = cochran_armitage_trend(efeito_n_coletas)
 
     return {
         "por_crianca": por_crianca,
@@ -576,8 +867,14 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "combinada_inconclusiva": combinada_inconclusiva,
         "cat_counts": cat_counts,
         "prev_fecal": prev_fecal,
+        "prev_fecal_ic95_inf": prev_fecal_ic95_inf,
+        "prev_fecal_ic95_sup": prev_fecal_ic95_sup,
         "prev_lamina": prev_lamina,
+        "prev_lamina_ic95_inf": prev_lamina_ic95_inf,
+        "prev_lamina_ic95_sup": prev_lamina_ic95_sup,
         "prev_combinada": prev_combinada,
+        "prev_combinada_ic95_inf": prev_combinada_ic95_inf,
+        "prev_combinada_ic95_sup": prev_combinada_ic95_sup,
         "especies_resumo": especies_resumo,
         "poli": poli, "mono": mono, "neg": neg,
         "combos_resumo": combos_resumo,
@@ -586,4 +883,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "fecal_cumulativa": fecal_cumulativa,
         "metodo_especie_resumo": metodo_especie_resumo,
         "todos_parasitos_resumo": todos_parasitos_resumo,
+        "mcnemar_hpj_willis": mcnemar_hpj_willis_res,
+        "cochran_armitage_efeito_coletas": cochran_armitage_res,
     }
