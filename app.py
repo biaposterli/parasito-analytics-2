@@ -586,11 +586,14 @@ if uploaded_file is not None:
                     section_title(
                         "Prevalência de todos os parasitos",
                         "Reúne, num só gráfico, as espécies encontradas por métodos fecais (HPJ, "
-                        "Willis, Baermann-Picanço) e por Graham/lâmina. Como as bases de cálculo são "
-                        "diferentes por domínio — fecal usa como denominador as crianças com resultado "
-                        "fecal conclusivo, e Enterobius (Graham) usa as crianças com Graham conclusivo — "
-                        "a tabela ao lado do gráfico mostra o denominador (Base N) e o(s) método(s) que "
-                        "detectou(aram) cada espécie.",
+                        "Willis, Baermann-Picanço) e por Graham/lâmina. As bases de cálculo diferem "
+                        "por domínio — a tabela ao lado do gráfico mostra o denominador (Base N) e "
+                        "o(s) método(s) que detectou(aram) cada espécie. Quando a mesma espécie foi "
+                        "encontrada em métodos de domínios diferentes (ex.: Enterobius vermicularis, "
+                        "tipicamente pelo Graham, mas ocasionalmente também visível num método "
+                        "fecal), ela aparece numa única linha \"Fecal + Lâmina\" — o cálculo é feito "
+                        "por criança, então quem foi detectado por mais de um método conta uma vez "
+                        "só, não duas.",
                     )
                     colT, colU = st.columns([3, 2])
                     with colT:
@@ -641,9 +644,12 @@ if uploaded_file is not None:
                     st.write("")
                     section_title(
                         "Prevalência por espécie — métodos fecais",
-                        "Base: fezes com resultado conclusivo. Enterobius vermicularis (Graham/lâmina) "
-                        "não entra nesta tabela — sua prevalência tem base amostral diferente e já "
-                        "aparece no gráfico unificado acima.",
+                        "Base: fezes com resultado conclusivo. Mostra cada espécie encontrada por "
+                        "HPJ, Willis ou Baermann-Picanço especificamente — inclusive Enterobius "
+                        "vermicularis, se algum caso tiver sido identificado incidentalmente num "
+                        "método fecal (achado válido, não é erro). A prevalência combinada dessa "
+                        "espécie com o Graham, sem contar a mesma criança duas vezes, está no "
+                        "gráfico unificado acima.",
                     )
                     colA, colB = st.columns([3, 2])
                     with colA:
