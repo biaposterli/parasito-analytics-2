@@ -93,7 +93,7 @@ def _chart_todos_parasitos(todos_df):
         return None
     df = todos_df.sort_values("prevalencia")
     colors_map = {"Patogênico": MPL_BRICK, "Comensal": MPL_AMBER, "Não classificado": MPL_SAGE}
-    hatch_map = {"Fecal": "", "Lâmina (Graham)": "///"}
+    hatch_map = {"Fecal": "", "Lâmina (Graham)": "///", "Fecal + Lâmina": "xx"}
     bar_colors = [colors_map.get(c, MPL_SAGE) for c in df["categoria"]]
     hatches = [hatch_map.get(d, "") for d in df["dominio"]]
     fig, ax = plt.subplots(figsize=(6.2, max(1.6, 0.42 * len(df))))
@@ -353,10 +353,13 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- prevalência de todos os parasitos (fecal + Graham/lâmina, unificado) ----
     story.append(Paragraph("Prevalência de todos os parasitos", styles["h2"]))
     story.append(Paragraph(
-        "Espécies fecais (HPJ/Willis/Baermann-Picanço) e Enterobius vermicularis "
-        "(Graham/lâmina), reunidos num só gráfico. As bases de cálculo diferem por domínio "
-        "(ver coluna \"Base N\" na tabela abaixo) — por isso o método de detecção de cada "
-        "espécie é indicado ao lado da barra e na tabela.",
+        "Espécies fecais (HPJ/Willis/Baermann-Picanço) e achados de Graham/lâmina, reunidos num "
+        "só gráfico. As bases de cálculo diferem por domínio (ver coluna \"Base N\" na tabela "
+        "abaixo). Quando a mesma espécie foi encontrada em métodos de domínios diferentes (ex.: "
+        "Enterobius vermicularis, tipicamente pelo Graham, mas ocasionalmente também visível num "
+        "método fecal), ela aparece numa única linha \"Fecal + Lâmina\", com denominador e "
+        "numerador calculados por criança — quem foi detectado em mais de um método conta uma "
+        "vez só, não duas.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
@@ -403,8 +406,10 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- prevalência por espécie ----
     story.append(Paragraph("Prevalência por espécie — métodos fecais (base: fezes com resultado conclusivo)", styles["h2"]))
     story.append(Paragraph(
-        "Enterobius vermicularis (detectado pelo Graham/lâmina) não entra nesta tabela; sua "
-        "prevalência, com denominador próprio, está na tabela de comparação de métodos.",
+        "Cada espécie encontrada por HPJ, Willis ou Baermann-Picanço, especificamente — inclusive "
+        "Enterobius vermicularis, se algum caso tiver sido identificado incidentalmente num método "
+        "fecal (achado válido, não erro de digitação). A prevalência combinada dessa espécie com o "
+        "Graham, sem contar a mesma criança duas vezes, está no gráfico unificado acima.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
