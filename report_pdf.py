@@ -83,6 +83,29 @@ def _chart_especies(especies_df):
     return _fig_to_image(fig)
 
 
+def _chart_todos_parasitos(todos_df):
+    """Gráfico unificado de prevalência por espécie (fecal + Graham/lâmina), com
+    hachura indicando o domínio da amostra (fezes vs. lâmina) e cor indicando a
+    categoria (patogênico/comensal)."""
+    if todos_df.empty:
+        return None
+    df = todos_df.sort_values("prevalencia")
+    colors_map = {"Patogênico": MPL_BRICK, "Comensal": MPL_AMBER, "Não classificado": MPL_SAGE}
+    hatch_map = {"Fecal": "", "Lâmina (Graham)": "///"}
+    bar_colors = [colors_map.get(c, MPL_SAGE) for c in df["categoria"]]
+    hatches = [hatch_map.get(d, "") for d in df["dominio"]]
+    fig, ax = plt.subplots(figsize=(6.2, max(1.6, 0.42 * len(df))))
+    bars = ax.barh(df["especie"], df["prevalencia"], color=bar_colors)
+    for bar, h in zip(bars, hatches):
+        bar.set_hatch(h)
+        bar.set_edgecolor("white")
+    ax.set_xlabel("Prevalência (%)")
+    for i, (v, met) in enumerate(zip(df["prevalencia"], df["metodos"])):
+        ax.text(v + 0.5, i, f"{v}% · {met}", va="center", fontsize=7)
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
 def _chart_poli(neg, mono, poli):
     fig, ax = plt.subplots(figsize=(4.2, 4.2))
     vals = [neg, mono, poli]
@@ -285,6 +308,45 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     cat_df.columns = ["Categoria", "Nº crianças", "%"]
     story.append(_df_table(cat_df, col_widths=[80 * mm, 35 * mm, 25 * mm]))
 
+    # ---- prevalência de todos os parasitos (fecal + Graham/lâmina, unificado) ----
+    story.append(Paragraph("Prevalência de todos os parasitos", styles["h2"]))
+    story.append(Paragraph(
+        "Espécies fecais (HPJ/Willis/Baermann-Picanço) e Enterobius vermicularis "
+        "(Graham/lâmina), reunidos num só gráfico. As bases de cálculo diferem por domínio "
+        "(ver coluna \"Base N\" na tabela abaixo) — por isso o método de detecção de cada "
+        "espécie é indicado ao lado da barra e na tabela.",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 1.5 * mm))
+    todos_img = _chart_todos_parasitos(metrics["todos_parasitos_resumo"])
+    if todos_img:
+        story.append(todos_img)
+        story.append(Spacer(1, 2 * mm))
+    todos_table = metrics["todos_parasitos_resumo"].rename(columns={
+        "especie": "Espécie", "categoria": "Categoria", "dominio": "Amostra", "n": "N",
+        "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)",
+    })
+    story.append(_df_table(todos_table, col_widths=[38 * mm, 20 * mm, 24 * mm, 12 * mm, 22 * mm, 16 * mm, 36 * mm]))
+
+    # ---- prevalência por método e espécie ----
+    story.append(Paragraph("Prevalência por método diagnóstico e espécie", styles["h2"]))
+    story.append(Paragraph(
+        "Cada valor é a prevalência (%) daquela espécie especificamente pelo método indicado; "
+        "denominador = crianças com resultado conclusivo naquele método. Uma mesma espécie pode "
+        "aparecer em mais de um método fecal.",
+        styles["small"],
+    ))
+    story.append(Spacer(1, 1.5 * mm))
+    if not metrics["metodo_especie_resumo"].empty:
+        pivot = metrics["metodo_especie_resumo"].pivot_table(
+            index="especie", columns="metodo", values="prevalencia", aggfunc="first",
+        ).reindex(columns=["Graham", "HPJ", "Willis", "Baermann-Picanço"])
+        pivot_df = pivot.reset_index().rename(columns={"especie": "Espécie"})
+        pivot_df = pivot_df.fillna("—")
+        story.append(_df_table(pivot_df, col_widths=[50 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm]))
+    else:
+        story.append(Paragraph("Sem dados suficientes para este cruzamento.", styles["body"]))
+
     # ---- prevalência por espécie ----
     story.append(Paragraph("Prevalência por espécie — métodos fecais (base: fezes com resultado conclusivo)", styles["h2"]))
     story.append(Paragraph(
@@ -347,9 +409,9 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- curva cumulativa ----
     if not metrics["fecal_cumulativa"].empty:
         story.append(Paragraph("Ganho marginal por amostra — curva cumulativa", styles["h2"]))
-        n_coorte = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
+        n_grupo = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
         story.append(Paragraph(
-            f"Mesma coorte de {n_coorte} criança(s) que entregou o número máximo de potes "
+            f"Mesmo grupo de {n_grupo} criança(s) que entregou o número máximo de potes "
             "observado no estudo, medida repetida (1ª, 1ª+2ª ... coletas). Sem viés de comparar "
             "subgrupos diferentes de crianças.",
             styles["small"],
