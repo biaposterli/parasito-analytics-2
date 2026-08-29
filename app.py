@@ -272,6 +272,29 @@ def step_header(number, title):
     )
 
 
+def format_ic(inf, sup):
+    """Formata um par (limite_inferior, limite_superior) de IC95% para exibição.
+    Retorna um texto neutro quando o intervalo não pôde ser calculado (n=0)."""
+    if inf is None or sup is None:
+        return "IC95% não calculável (n=0)"
+    return f"IC95%: {inf:.1f}–{sup:.1f}%"
+
+
+def with_ic_column(df: pd.DataFrame, prev_col="prevalencia", inf_col="ic95_inf", sup_col="ic95_sup",
+                    label="IC 95%") -> pd.DataFrame:
+    """Devolve uma cópia do DataFrame com uma coluna extra combinando o IC95% num
+    único texto legível ('11.0 – 42.1%'), para exibir ao lado da prevalência sem
+    poluir a tabela com duas colunas numéricas soltas."""
+    out = df.copy()
+    if inf_col in out.columns and sup_col in out.columns:
+        out[label] = out.apply(
+            lambda r: f"{r[inf_col]:.1f} – {r[sup_col]:.1f}%" if pd.notna(r[inf_col]) and pd.notna(r[sup_col]) else "—",
+            axis=1,
+        )
+        out = out.drop(columns=[inf_col, sup_col])
+    return out
+
+
 # ----------------------------------------------------------------
 # Modelo de planilha (bytes) — usado no Passo 01 e na sidebar
 # ----------------------------------------------------------------
@@ -503,21 +526,31 @@ if uploaded_file is not None:
                 with tab_geral:
                     section_title("Resumo executivo")
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Prevalência — amostra fecal", f"{metrics['prev_fecal']:.1f}%",
-                               help="Base: crianças com resultado CONCLUSIVO em pelo menos um método "
-                                    "fecal (HPJ, Willis ou Baermann-Picanço). Achados exclusivos do "
-                                    "Graham (lâmina) não entram aqui — veja 'Espécies & parasitos' "
-                                    "para a prevalência de Enterobius. Crianças com todos os resultados "
-                                    "fecais marcados como 'Amostra insuficiente' são excluídas do "
-                                    "denominador (não contam como negativas).")
-                    c2.metric("Prevalência — só lâmina", f"{metrics['prev_lamina']:.1f}%",
-                               help="Base: crianças que só entregaram lâmina (nunca o pote de fezes) e "
-                                    "tiveram resultado conclusivo no Graham. Reflete apenas Enterobius "
-                                    "vermicularis — único parasita pesquisável só com a lâmina.")
-                    c3.metric("Prevalência combinada", f"{metrics['prev_combinada']:.1f}%",
-                               help="Todas as crianças com pelo menos um resultado conclusivo, em "
-                                    "qualquer domínio (fezes e/ou lâmina) — use com cautela, mistura "
-                                    "profundidades diagnósticas diferentes.")
+                    with c1:
+                        st.metric("Prevalência — amostra fecal", f"{metrics['prev_fecal']:.1f}%",
+                                   help="Base: crianças com resultado CONCLUSIVO em pelo menos um método "
+                                        "fecal (HPJ, Willis ou Baermann-Picanço). Achados exclusivos do "
+                                        "Graham (lâmina) não entram aqui — veja 'Espécies & parasitos' "
+                                        "para a prevalência de Enterobius. Crianças com todos os resultados "
+                                        "fecais marcados como 'Amostra insuficiente' são excluídas do "
+                                        "denominador (não contam como negativas). IC95% calculado pelo "
+                                        "método de Wilson.")
+                        st.caption(format_ic(metrics["prev_fecal_ic95_inf"], metrics["prev_fecal_ic95_sup"]))
+                    with c2:
+                        st.metric("Prevalência — só lâmina", f"{metrics['prev_lamina']:.1f}%",
+                                   help="Base: crianças que só entregaram lâmina (nunca o pote de fezes) e "
+                                        "tiveram resultado conclusivo no Graham. Reflete apenas Enterobius "
+                                        "vermicularis — único parasita pesquisável só com a lâmina. IC95% "
+                                        "calculado pelo método de Wilson (preferível ao normal para n "
+                                        "pequeno, como costuma ser o caso deste subgrupo).")
+                        st.caption(format_ic(metrics["prev_lamina_ic95_inf"], metrics["prev_lamina_ic95_sup"]))
+                    with c3:
+                        st.metric("Prevalência combinada", f"{metrics['prev_combinada']:.1f}%",
+                                   help="Todas as crianças com pelo menos um resultado conclusivo, em "
+                                        "qualquer domínio (fezes e/ou lâmina) — use com cautela, mistura "
+                                        "profundidades diagnósticas diferentes. IC95% calculado pelo "
+                                        "método de Wilson.")
+                        st.caption(format_ic(metrics["prev_combinada_ic95_inf"], metrics["prev_combinada_ic95_sup"]))
 
                     if n_inconclusivas > 0:
                         st.markdown(
@@ -576,11 +609,12 @@ if uploaded_file is not None:
                         else:
                             st.info("Nenhum parasito detectado nesta base.")
                     with colU:
-                        todos_display = metrics["todos_parasitos_resumo"].rename(columns={
+                        todos_display = with_ic_column(metrics["todos_parasitos_resumo"]).rename(columns={
                             "especie": "Espécie", "categoria": "Categoria", "dominio": "Amostra",
                             "n": "N", "prevalencia": "Prevalência %", "base_n": "Base N", "metodos": "Método(s)",
                         })
                         st.dataframe(todos_display, width='stretch', hide_index=True)
+                        st.caption("IC95% pelo método de Wilson, calculado sobre o denominador (Base N) de cada espécie.")
 
                     st.write("")
                     subsection_title(
@@ -595,6 +629,12 @@ if uploaded_file is not None:
                             index="especie", columns="metodo", values="prevalencia", aggfunc="first",
                         ).reindex(columns=["Graham", "HPJ", "Willis", "Baermann-Picanço"])
                         st.dataframe(pivot, width='stretch')
+                        with st.expander("Ver com intervalos de confiança (IC95%, Wilson)"):
+                            me_display = with_ic_column(metrics["metodo_especie_resumo"]).rename(columns={
+                                "metodo": "Método", "especie": "Espécie", "n": "N",
+                                "prevalencia": "Prevalência %", "categoria": "Categoria",
+                            })
+                            st.dataframe(me_display, width='stretch', hide_index=True)
                     else:
                         st.info("Nenhum dado suficiente para o cruzamento método x espécie.")
 
@@ -620,7 +660,11 @@ if uploaded_file is not None:
                         else:
                             st.info("Nenhuma espécie fecal detectada nesta base.")
                     with colB:
-                        st.dataframe(metrics["especies_resumo"], width='stretch', hide_index=True)
+                        esp_display = with_ic_column(metrics["especies_resumo"]).rename(columns={
+                            "especie": "Espécie", "n": "N", "prevalencia": "Prevalência %", "categoria": "Categoria",
+                        })
+                        st.dataframe(esp_display, width='stretch', hide_index=True)
+                        st.caption("IC95% pelo método de Wilson (base: fezes conclusivas).")
 
                     st.write("")
                     section_title("Mono x poliparasitismo", "Base: espécies de origem fecal.")
@@ -662,7 +706,49 @@ if uploaded_file is not None:
                         fig3.update_layout(**PLOTLY_LAYOUT)
                         st.plotly_chart(fig3, width='stretch')
                     with colF:
-                        st.dataframe(metrics["metodos_resumo"], width='stretch', hide_index=True)
+                        met_display = with_ic_column(metrics["metodos_resumo"]).rename(columns={
+                            "metodo": "Método", "amostra_biologica": "Amostra",
+                            "n_criancas_testaveis": "Testáveis", "n_criancas_positivas": "Positivas",
+                            "n_criancas_inconclusivas": "Inconclusivas", "prevalencia": "Prevalência %",
+                        })
+                        st.dataframe(met_display, width='stretch', hide_index=True)
+                        st.caption("IC95% pelo método de Wilson.")
+
+                    st.write("")
+                    subsection_title(
+                        "HPJ x Willis — teste de McNemar",
+                        "Compara os dois métodos aplicados à MESMA amostra de fezes da mesma criança "
+                        "(dados pareados) — testa se um método detecta mais positivos que o outro, "
+                        "usando só as crianças em que os dois métodos discordaram entre si.",
+                    )
+                    mc = metrics["mcnemar_hpj_willis"]
+                    if mc["n_pareado"] == 0 or mc["tabela"] is None:
+                        st.info("Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente — "
+                                "teste não calculado.")
+                    else:
+                        tb = mc["tabela"]
+                        mc_col1, mc_col2 = st.columns([2, 3])
+                        with mc_col1:
+                            mc_table = pd.DataFrame(
+                                [[tb["pp"], tb["pn"]], [tb["np"], tb["nn"]]],
+                                index=["HPJ +", "HPJ −"], columns=["Willis +", "Willis −"],
+                            )
+                            st.dataframe(mc_table, width='stretch')
+                        with mc_col2:
+                            metodo_label = {
+                                "exato": "teste exato (< 25 discordâncias)",
+                                "chi2_corrigido": "qui-quadrado com correção de continuidade",
+                                "sem_discordancia": "sem discordâncias — nada a testar",
+                            }.get(mc["metodo"], mc["metodo"])
+                            st.metric("p-valor (McNemar)", f"{mc['p_valor']:.4f}" if mc["p_valor"] is not None else "—")
+                            st.caption(
+                                f"n pareado = {mc['n_pareado']} · {tb['pn'] + tb['np']} discordância(s) "
+                                f"({tb['pn']} HPJ+/Willis−, {tb['np']} HPJ−/Willis+) · {metodo_label}."
+                            )
+                            if mc["p_valor"] is not None and mc["p_valor"] < 0.05:
+                                st.caption("p < 0,05 — diferença estatisticamente significativa entre os métodos nesta amostra.")
+                            elif mc["p_valor"] is not None:
+                                st.caption("p ≥ 0,05 — sem evidência estatística de diferença entre os métodos nesta amostra.")
 
                     st.write("")
                     section_title(
@@ -683,6 +769,15 @@ if uploaded_file is not None:
                         st.plotly_chart(fig4, width='stretch')
                     else:
                         st.info("Dados insuficientes para este gráfico.")
+
+                    ca = metrics["cochran_armitage_efeito_coletas"]
+                    if ca["p_valor"] is not None:
+                        st.caption(
+                            f"Teste de tendência de Cochran-Armitage: Z = {ca['estatistica_z']:.3f}, "
+                            f"p = {ca['p_valor']:.4f} ({ca['n_grupos']} grupos). {ca['aviso']}"
+                        )
+                    elif ca["n_grupos"] and ca["n_grupos"] >= 2:
+                        st.caption(f"Teste de tendência de Cochran-Armitage não calculável nesta base. {ca['aviso']}")
 
                     st.write("")
                     section_title("Ganho marginal por amostra — curva cumulativa")
@@ -735,11 +830,19 @@ if uploaded_file is not None:
                         )
                         m["cat_counts"].rename("n").to_frame().to_excel(writer, sheet_name="Categoria_Amostragem")
                         pd.DataFrame([
-                            {"metrica": "Prevalência — amostra fecal (conclusiva)", "valor_pct": m["prev_fecal"], "n_criancas": len(m["fecal_conclusivo"])},
-                            {"metrica": "Prevalência — só lâmina (conclusiva)", "valor_pct": m["prev_lamina"], "n_criancas": len(m["lamina_only_conclusivo"])},
-                            {"metrica": "Prevalência combinada (conclusiva)", "valor_pct": m["prev_combinada"], "n_criancas": len(m["combinada_base"])},
-                            {"metrica": "Inconclusivas — fezes (amostra insuficiente em tudo)", "valor_pct": None, "n_criancas": len(m["fecal_inconclusivo"])},
-                            {"metrica": "Inconclusivas — só lâmina", "valor_pct": None, "n_criancas": len(m["lamina_only_inconclusivo"])},
+                            {"metrica": "Prevalência — amostra fecal (conclusiva)", "valor_pct": m["prev_fecal"],
+                             "ic95_inf": m["prev_fecal_ic95_inf"], "ic95_sup": m["prev_fecal_ic95_sup"],
+                             "n_criancas": len(m["fecal_conclusivo"])},
+                            {"metrica": "Prevalência — só lâmina (conclusiva)", "valor_pct": m["prev_lamina"],
+                             "ic95_inf": m["prev_lamina_ic95_inf"], "ic95_sup": m["prev_lamina_ic95_sup"],
+                             "n_criancas": len(m["lamina_only_conclusivo"])},
+                            {"metrica": "Prevalência combinada (conclusiva)", "valor_pct": m["prev_combinada"],
+                             "ic95_inf": m["prev_combinada_ic95_inf"], "ic95_sup": m["prev_combinada_ic95_sup"],
+                             "n_criancas": len(m["combinada_base"])},
+                            {"metrica": "Inconclusivas — fezes (amostra insuficiente em tudo)", "valor_pct": None,
+                             "ic95_inf": None, "ic95_sup": None, "n_criancas": len(m["fecal_inconclusivo"])},
+                            {"metrica": "Inconclusivas — só lâmina", "valor_pct": None,
+                             "ic95_inf": None, "ic95_sup": None, "n_criancas": len(m["lamina_only_inconclusivo"])},
                         ]).to_excel(writer, sheet_name="Prevalencia_Geral", index=False)
                         m["todos_parasitos_resumo"].to_excel(writer, sheet_name="Todos_os_Parasitos", index=False)
                         m["especies_resumo"].to_excel(writer, sheet_name="Prevalencia_por_Especie", index=False)
@@ -753,6 +856,27 @@ if uploaded_file is not None:
                         m["metodos_resumo"].to_excel(writer, sheet_name="Comparacao_Metodos", index=False)
                         m["efeito_n_coletas"].to_excel(writer, sheet_name="Prevalencia_x_NColetas", index=False)
                         m["fecal_cumulativa"].to_excel(writer, sheet_name="Curva_Cumulativa_Fecal", index=False)
+
+                        mc = m["mcnemar_hpj_willis"]
+                        tb = mc["tabela"] or {}
+                        pd.DataFrame([{
+                            "n_pareado": mc["n_pareado"],
+                            "HPJ+ / Willis+": tb.get("pp"),
+                            "HPJ+ / Willis-": tb.get("pn"),
+                            "HPJ- / Willis+": tb.get("np"),
+                            "HPJ- / Willis-": tb.get("nn"),
+                            "estatistica": mc["estatistica"],
+                            "p_valor": mc["p_valor"],
+                            "metodo": mc["metodo"],
+                        }]).to_excel(writer, sheet_name="McNemar_HPJ_x_Willis", index=False)
+
+                        ca = m["cochran_armitage_efeito_coletas"]
+                        pd.DataFrame([{
+                            "n_grupos": ca["n_grupos"],
+                            "estatistica_z": ca["estatistica_z"],
+                            "p_valor": ca["p_valor"],
+                            "aviso": ca["aviso"],
+                        }]).to_excel(writer, sheet_name="CochranArmitage_NPotes", index=False)
                     return buf.getvalue()
 
                 with tab_export:
