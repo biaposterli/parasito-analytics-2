@@ -17,7 +17,7 @@ Correções em relação à v1:
      fezes na mesma contagem.
   5) "Efeito do número de potes entregues" deixa de usar positividade combinada
      (incluindo lâmina) como desfecho — agora usa só positividade fecal. Além disso,
-     é acrescentada uma curva de positividade CUMULATIVA (mesma coorte de crianças que
+     é acrescentada uma curva de positividade CUMULATIVA (mesmo grupo de crianças que
      entregaram o número máximo de potes, medida repetida), que é o desenho
      correto para estimar o ganho marginal de cada amostra adicional sem o viés de
      seleção de comparar subgrupos diferentes de crianças.
@@ -182,6 +182,9 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
         # tentativas por método individual (para metodos_resumo, sem viés de inconclusivo)
         instances_por_metodo = {nome_m: [] for _, nome_m, _, _ in METHOD_COLUMNS}
         positivo_metodo = {nome_m: False for _, nome_m, _, _ in METHOD_COLUMNS}
+        # espécies encontradas especificamente por cada método (para o cruzamento
+        # espécie x método na tabela "todos os parasitos")
+        especies_por_metodo = {nome_m: set() for _, nome_m, _, _ in METHOD_COLUMNS}
 
         for _, row in g.iterrows():
             status_amostra = std_status(row.get("status_amostra"))
@@ -204,6 +207,7 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
                     lamina_instances.append(inst)
                 if positive:
                     positivo_metodo[nome_m] = True
+                    especies_por_metodo[nome_m].update(species)
                     if dominio == "fecal":
                         especies_fecais_set.update(species)
                     else:
@@ -265,6 +269,11 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
             "status_HPJ": status_metodo["HPJ"],
             "status_Willis": status_metodo["Willis"],
 
+            "especies_Graham": sorted(especies_por_metodo["Graham"]),
+            "especies_Baermann-Picanço": sorted(especies_por_metodo["Baermann-Picanço"]),
+            "especies_HPJ": sorted(especies_por_metodo["HPJ"]),
+            "especies_Willis": sorted(especies_por_metodo["Willis"]),
+
             "tem_patogenico": any(e in PATOGENICOS for e in especies_total),
             "tem_comensal": any(e in COMENSAIS for e in especies_total),
         })
@@ -281,6 +290,7 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
             "n_especies_distintas_fecais", "poliparasitado_fecal",
             "positivo_Graham", "positivo_Baermann-Picanço", "positivo_HPJ", "positivo_Willis",
             "status_Graham", "status_Baermann-Picanço", "status_HPJ", "status_Willis",
+            "especies_Graham", "especies_Baermann-Picanço", "especies_HPJ", "especies_Willis",
             "tem_patogenico", "tem_comensal",
         ])
     return pd.DataFrame(rows)
@@ -288,7 +298,7 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_fecal_cumulative_curve(df: pd.DataFrame) -> pd.DataFrame:
     """Curva de positividade cumulativa por nº de potes considerados, medida na MESMA
-    coorte de crianças (as que entregaram o número máximo de potes observado no
+    grupo de crianças (as que entregaram o número máximo de potes observado no
     estudo) — evita o viés de selecionar subgrupos diferentes de crianças por nº de
     potes entregues (quem entrega mais pode diferir sistematicamente de quem entrega
     menos)."""
@@ -351,6 +361,10 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
     ])
     empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "prevalencia"])
     empty_cumulativa = pd.DataFrame(columns=["k", "n_criancas", "prevalencia_cumulativa"])
+    empty_metodo_especie = pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria"])
+    empty_todos_parasitos = pd.DataFrame(columns=[
+        "especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos",
+    ])
     return {
         "por_crianca": empty_child,
         "total": 0,
@@ -373,6 +387,8 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
         "metodos_resumo": empty_metodos,
         "efeito_n_coletas": empty_efeito,
         "fecal_cumulativa": empty_cumulativa,
+        "metodo_especie_resumo": empty_metodo_especie,
+        "todos_parasitos_resumo": empty_todos_parasitos,
     }
 
 
@@ -462,6 +478,74 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         })
     metodos_resumo = pd.DataFrame(metodos_rows)
 
+    # ---- prevalência por espécie x método — para cada método, denominador =
+    # crianças com resultado conclusivo NAQUELE método (mesma base de
+    # metodos_resumo), contando quantas foram positivas para cada espécie
+    # especificamente através desse método.
+    metodo_especie_rows = []
+    for col, nome_m, status_key, dominio in METHOD_COLUMNS:
+        status_col = f"status_{nome_m}"
+        especies_col = f"especies_{nome_m}"
+        conclusivos = analisavel[analisavel[status_col].isin(["positivo", "negativo"])]
+        especie_count_m = {}
+        for especies in conclusivos[especies_col]:
+            for e in especies:
+                especie_count_m[e] = especie_count_m.get(e, 0) + 1
+        for e, n in especie_count_m.items():
+            metodo_especie_rows.append({
+                "metodo": nome_m,
+                "especie": e,
+                "n": n,
+                "prevalencia": pct(n, len(conclusivos)),
+                "categoria": "Patogênico" if e in PATOGENICOS else ("Comensal" if e in COMENSAIS else "Não classificado"),
+            })
+    metodo_especie_resumo = pd.DataFrame(metodo_especie_rows) if metodo_especie_rows else \
+        pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria"])
+
+    # ---- prevalência de TODOS os parasitos (fecais + Graham/lâmina), unificada
+    # numa só tabela, indicando por qual(is) método(s) cada espécie foi detectada.
+    # Espécies fecais usam o denominador combinado (fecal_conclusivo, já que os 3
+    # métodos fecais alimentam a mesma prevalência por criança); Enterobius
+    # vermicularis (só detectável pelo Graham) usa o denominador próprio do
+    # método Graham — os denominadores são reportados em 'base_n' porque não são
+    # o mesmo grupo de crianças.
+    metodos_by_especie = {}
+    if not metodo_especie_resumo.empty:
+        metodos_by_especie = (
+            metodo_especie_resumo.groupby("especie")["metodo"]
+            .apply(lambda s: " + ".join(sorted(set(s))))
+            .to_dict()
+        )
+
+    todos_rows = []
+    for _, r in especies_resumo.iterrows():
+        todos_rows.append({
+            "especie": r["especie"],
+            "categoria": r["categoria"],
+            "dominio": "Fecal",
+            "n": r["n"],
+            "prevalencia": r["prevalencia"],
+            "base_n": len(fecal_conclusivo),
+            "metodos": metodos_by_especie.get(r["especie"], ""),
+        })
+    graham_especies = metodo_especie_resumo[metodo_especie_resumo["metodo"] == "Graham"] \
+        if not metodo_especie_resumo.empty else pd.DataFrame(columns=metodo_especie_resumo.columns)
+    graham_conclusivos_n = int(
+        metodos_resumo.loc[metodos_resumo["metodo"] == "Graham", "n_criancas_testaveis"].iloc[0]
+    ) if not metodos_resumo.empty else 0
+    for _, r in graham_especies.iterrows():
+        todos_rows.append({
+            "especie": r["especie"],
+            "categoria": r["categoria"],
+            "dominio": "Lâmina (Graham)",
+            "n": r["n"],
+            "prevalencia": r["prevalencia"],
+            "base_n": graham_conclusivos_n,
+            "metodos": "Graham",
+        })
+    todos_parasitos_resumo = pd.DataFrame(todos_rows).sort_values("prevalencia", ascending=False).reset_index(drop=True) \
+        if todos_rows else pd.DataFrame(columns=["especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos"])
+
     # ---- efeito do nº de potes — corrigido para usar só positividade FECAL
     # (antes misturava achado de lâmina) e restrito a quem teve resultado fecal
     # conclusivo. Mantém como leitura descritiva rápida; ver também
@@ -500,4 +584,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "metodos_resumo": metodos_resumo,
         "efeito_n_coletas": efeito_n_coletas,
         "fecal_cumulativa": fecal_cumulativa,
+        "metodo_especie_resumo": metodo_especie_resumo,
+        "todos_parasitos_resumo": todos_parasitos_resumo,
     }
