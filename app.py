@@ -458,13 +458,13 @@ st.markdown(
 # ==================================================================
 st.markdown(
     """<div class="lapahv-hero">
-    <span class="lapahv-eyebrow">Duas amostras, um relatório correto</span>
-    <h2>Da planilha de campo ao relatório epidemiológico.</h2>
-    <p>Todo exame coproparasitológico coleta dois materiais separados — e cada um segue
-    seu próprio caminho até o diagnóstico. Baixe o modelo, preencha os dados da sua pesquisa e
-    envie abaixo para receber a análise por paciente, já respeitando qual método pôde de fato ser
-    feito em cada um. A planilha pode trazer só os métodos que o seu laboratório realmente usa —
-    o sistema detecta sozinho quais estão presentes.</p>
+    <span class="lapahv-eyebrow">Métodos diversos, um relatório correto</span>
+    <h2>Seus dados de coleta, transformados em relatório epidemiológico.</h2>
+    <p>Fezes e lâmina seguem caminhos diagnósticos diferentes, e cada laboratório usa o conjunto de
+    métodos que lhe é próprio. Baixe o modelo, preencha os dados da sua pesquisa e envie abaixo: o
+    sistema reconhece sozinho quais métodos estão na planilha, mantém os denominadores corretos
+    para cada um e gera prevalências, intervalos de confiança e testes estatísticos — pronto para
+    qualquer população em estudo.</p>
     </div>""",
     unsafe_allow_html=True,
 )
