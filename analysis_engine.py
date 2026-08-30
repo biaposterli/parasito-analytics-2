@@ -11,14 +11,14 @@ Alterações da v2 -> v3:
        - Teste de McNemar (dados pareados) comparando HPJ x Willis.
        - Teste de tendência de Cochran-Armitage para a série "efeito do nº
          de potes entregues" (com aviso explícito de que essa comparação é
-         entre SUBGRUPOS diferentes de crianças, sujeita a viés de seleção —
+         entre SUBGRUPOS diferentes de pacientes, sujeita a viés de seleção —
          a leitura sem esse viés continua sendo a curva cumulativa).
      Todos os testes são implementados "do zero", sem depender de scipy ou
      statsmodels (que não são dependências atuais do projeto — ver
      requirements.txt), usando apenas math/numpy.
 
 Correções mantidas da v1 -> v2:
-  1) prev_fecal deixa de contar como "positiva" uma criança cujo único achado veio da
+  1) prev_fecal deixa de contar como "positiva" um paciente cujo único achado veio da
      lâmina (Graham) — agora usa exclusivamente os métodos fecais (HPJ, Willis,
      Baermann-Picanço).
   2) "Amostra insuficiente" passa a ser tratada como resultado INCONCLUSIVO, não mais
@@ -115,7 +115,7 @@ METHOD_CATALOG = [
 # get_active_methods(df) para isso.
 METHOD_COLUMNS = METHOD_CATALOG
 
-REQUIRED_COLUMNS = ["id_paciente", "coleta", "nome_crianca"]
+REQUIRED_COLUMNS = ["id_paciente", "coleta", "nome_paciente"]
 
 ORDEM_COLETA = {"P1": 1, "P2": 2, "P3": 3}
 
@@ -215,13 +215,18 @@ def _reduce_status(instance_list):
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    # Compatibilidade com planilhas antigas: o sistema deixou de assumir que toda
+    # análise é sobre crianças (nome_crianca -> nome_paciente, termo genérico), mas
+    # planilhas já preenchidas com o cabeçalho antigo continuam sendo lidas.
+    if "nome_paciente" not in df.columns and "nome_crianca" in df.columns:
+        df = df.rename(columns={"nome_crianca": "nome_paciente"})
     return df
 
 
 def validate_columns(df: pd.DataFrame):
     """Valida a planilha enviada. Diferente da v3, NÃO exige mais que todas as
     colunas de método do catálogo estejam presentes — só exige:
-      1) as colunas-base (id_paciente, coleta, nome_crianca);
+      1) as colunas-base (id_paciente, coleta, nome_paciente);
       2) pelo menos UM método reconhecido (metodo_*) na planilha;
       3) a coluna de status do domínio correspondente a cada método ativo
          (status_amostra se algum método fecal está presente; status_lamina
@@ -315,7 +320,7 @@ def _wilson_ci_pairs(numeradores, denominadores):
     return los, his
 
 
-def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
+def mcnemar_hpj_willis(por_paciente: pd.DataFrame) -> dict:
     """Teste de McNemar comparando os métodos diagnósticos HPJ e Willis.
 
     Racional: HPJ e Willis são aplicados à MESMA amostra de fezes da mesma
@@ -332,7 +337,7 @@ def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
 
     Só é calculado se a planilha enviada tinha os dois métodos (HPJ e
     Willis) — caso contrário as colunas status_HPJ/status_Willis nem
-    existem em por_crianca, e a função retorna n_pareado=0 abaixo.
+    existem em por_paciente, e a função retorna n_pareado=0 abaixo.
 
     Tabela 2x2 (contagens de crianças):
                          Willis +      Willis -
@@ -352,12 +357,12 @@ def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
     Retorna None nos campos numéricos se não houver crianças pareadas
     suficientes (n_pareado = 0), para não quebrar o pipeline.
     """
-    if por_crianca.empty or "status_HPJ" not in por_crianca.columns or "status_Willis" not in por_crianca.columns:
+    if por_paciente.empty or "status_HPJ" not in por_paciente.columns or "status_Willis" not in por_paciente.columns:
         return {"n_pareado": 0, "tabela": None, "estatistica": None, "p_valor": None, "metodo": None}
 
-    base = por_crianca[
-        por_crianca["status_HPJ"].isin(["positivo", "negativo"])
-        & por_crianca["status_Willis"].isin(["positivo", "negativo"])
+    base = por_paciente[
+        por_paciente["status_HPJ"].isin(["positivo", "negativo"])
+        & por_paciente["status_Willis"].isin(["positivo", "negativo"])
     ]
     n = len(base)
     if n == 0:
@@ -371,7 +376,7 @@ def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
     np_ = int((~hpj_pos & willis_pos).sum())
     nn = int((~hpj_pos & ~willis_pos).sum())
 
-    n_disc = pn + np_  # crianças em que os dois métodos discordam
+    n_disc = pn + np_  # pacientes em que os dois métodos discordam
 
     if n_disc == 0:
         # Concordância perfeita entre os dois métodos nesta amostra — nada a testar,
@@ -416,7 +421,7 @@ def cochran_armitage_trend(grupos: pd.DataFrame) -> dict:
     quando a hipótese de interesse é especificamente uma tendência).
 
     Espera um DataFrame com colunas 'n_potes_entregues' (score/nível
-    ordinal, usado como t_i), 'n_criancas' (n_i) e 'n_positivos' (x_i) —
+    ordinal, usado como t_i), 'n_pacientes' (n_i) e 'n_positivos' (x_i) —
     contagens EXATAS, não prevalência em % já arredondada.
 
     Estatística (aproximação normal):
@@ -431,17 +436,17 @@ def cochran_armitage_trend(grupos: pd.DataFrame) -> dict:
     build_fecal_cumulative_curve): os grupos aqui são SUBGRUPOS diferentes
     de crianças (quem entregou 1, 2 ou 3 potes), não medidas repetidas na
     mesma criança. Uma tendência estatisticamente significativa pode
-    refletir viés de seleção (ex.: crianças que entregam mais potes podem
+    refletir viés de seleção (ex.: pacientes que entregam mais potes podem
     ser sistematicamente diferentes) tanto quanto um efeito real do número
     de coletas. A leitura sem esse viés é a curva cumulativa
     (fecal_cumulativa), que dispensa este teste por ser medida repetida no
     mesmo grupo.
     """
     aviso = (
-        "Compara SUBGRUPOS diferentes de crianças (quem entregou 1, 2 ou 3 potes) — "
+        "Compara SUBGRUPOS diferentes de pacientes (quem entregou 1, 2 ou 3 potes) — "
         "sujeito a viés de seleção. A leitura mais confiável do ganho por coleta "
         "adicional é a curva cumulativa (fecal_cumulativa), medida repetida no mesmo "
-        "grupo de crianças, que não depende deste teste."
+        "grupo de pacientes, que não depende deste teste."
     )
     if grupos.empty or len(grupos) < 2:
         return {
@@ -450,7 +455,7 @@ def cochran_armitage_trend(grupos: pd.DataFrame) -> dict:
         }
 
     t = grupos["n_potes_entregues"].astype(float).to_numpy()
-    n_i = grupos["n_criancas"].astype(float).to_numpy()
+    n_i = grupos["n_pacientes"].astype(float).to_numpy()
     x_i = grupos["n_positivos"].astype(float).to_numpy()
 
     N = n_i.sum()
@@ -502,7 +507,7 @@ def build_per_child(df: pd.DataFrame, active_methods=None) -> pd.DataFrame:
     for id_paciente, g in df.groupby(df["id_paciente"].apply(norm_text), dropna=True):
         if id_paciente is None:
             continue
-        nome = norm_text(g["nome_crianca"].iloc[0]) or ""
+        nome = norm_text(g["nome_paciente"].iloc[0]) or ""
         n_pote = 0
         n_lamina = 0
 
@@ -569,7 +574,7 @@ def build_per_child(df: pd.DataFrame, active_methods=None) -> pd.DataFrame:
 
         row_out = {
             "id_paciente": id_paciente,
-            "nome_crianca": nome,
+            "nome_paciente": nome,
             "n_coletas_registradas": len(g),
             "n_coletas_pote_entregue": n_pote,
             "n_coletas_lamina_entregue": n_lamina,
@@ -611,7 +616,7 @@ def build_per_child(df: pd.DataFrame, active_methods=None) -> pd.DataFrame:
         rows.append(row_out)
 
     base_cols = [
-        "id_paciente", "nome_crianca", "n_coletas_registradas",
+        "id_paciente", "nome_paciente", "n_coletas_registradas",
         "n_coletas_pote_entregue", "n_coletas_lamina_entregue", "categoria_amostragem",
         "participou_estudo", "fecal_status", "lamina_status", "positivo_fecal",
         "positivo_lamina", "positivo_algum_metodo", "especies_fecais", "especies_fecais_str",
@@ -667,7 +672,7 @@ def build_fecal_cumulative_curve(df: pd.DataFrame, fecal_methods=None) -> pd.Dat
                     positivo_instance = True
             records.append((id_paciente, rank, positivo_instance))
 
-    cols = ["k", "n_criancas", "prevalencia_cumulativa"]
+    cols = ["k", "n_pacientes", "prevalencia_cumulativa"]
     if not records:
         return pd.DataFrame(columns=cols)
 
@@ -685,11 +690,11 @@ def build_fecal_cumulative_curve(df: pd.DataFrame, fecal_methods=None) -> pd.Dat
         sub = cohort[cohort["rank"] <= k]
         cum_pos = sub.groupby("id_paciente")["positivo"].any().reindex(cohort_ids, fill_value=False)
         pos = int(cum_pos.sum())
-        out_rows.append({"k": k, "n_criancas": n, "prevalencia_cumulativa": round(100 * pos / n, 1) if n else 0.0})
+        out_rows.append({"k": k, "n_pacientes": n, "prevalencia_cumulativa": round(100 * pos / n, 1) if n else 0.0})
     return pd.DataFrame(out_rows)
 
 
-def _empty_metrics(por_crianca: pd.DataFrame, active_methods=None) -> dict:
+def _empty_metrics(por_paciente: pd.DataFrame, active_methods=None) -> dict:
     """Estrutura de retorno usada quando não há nenhuma criança identificada
     (planilha vazia ou sem id_paciente preenchido). Evita quebrar o pipeline em
     DataFrames com 0 linhas, onde o pandas cria colunas com dtype 'object' e a
@@ -698,21 +703,21 @@ def _empty_metrics(por_crianca: pd.DataFrame, active_methods=None) -> dict:
     empty_cat = pd.Series([0, 0, 0, 0], index=[
         "Fezes e lâmina", "Apenas fezes (sem lâmina)", "Apenas lâmina (sem fezes)", "Nenhum material",
     ])
-    empty_child = por_crianca  # já vem com as colunas certas, só sem linhas
+    empty_child = por_paciente  # já vem com as colunas certas, só sem linhas
     empty_especies = pd.DataFrame(columns=["especie", "n", "prevalencia", "categoria", "ic95_inf", "ic95_sup"])
     empty_combos = pd.DataFrame(columns=["combinacao", "n"])
     empty_metodos = pd.DataFrame(columns=[
-        "metodo", "amostra_biologica", "n_criancas_testaveis", "n_criancas_positivas",
-        "n_criancas_inconclusivas", "prevalencia", "ic95_inf", "ic95_sup",
+        "metodo", "amostra_biologica", "n_pacientes_testaveis", "n_pacientes_positivas",
+        "n_pacientes_inconclusivas", "prevalencia", "ic95_inf", "ic95_sup",
     ])
-    empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "n_positivos", "prevalencia"])
-    empty_cumulativa = pd.DataFrame(columns=["k", "n_criancas", "prevalencia_cumulativa"])
+    empty_efeito = pd.DataFrame(columns=["n_potes_entregues", "n_pacientes", "n_positivos", "prevalencia"])
+    empty_cumulativa = pd.DataFrame(columns=["k", "n_pacientes", "prevalencia_cumulativa"])
     empty_metodo_especie = pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria", "ic95_inf", "ic95_sup"])
     empty_todos_parasitos = pd.DataFrame(columns=[
         "especie", "categoria", "dominio", "n", "prevalencia", "base_n", "metodos", "ic95_inf", "ic95_sup",
     ])
     return {
-        "por_crianca": empty_child,
+        "por_paciente": empty_child,
         "total": 0,
         "analisavel": empty_child,
         "fecal": empty_child,
@@ -752,24 +757,24 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     active_methods = get_active_methods(df)
     fecal_methods_ativos = active_fecal_methods(active_methods)
 
-    por_crianca = build_per_child(df, active_methods)
-    total = len(por_crianca)
+    por_paciente = build_per_child(df, active_methods)
+    total = len(por_paciente)
     if total == 0:
-        return _empty_metrics(por_crianca, active_methods)
+        return _empty_metrics(por_paciente, active_methods)
 
-    analisavel = por_crianca[por_crianca["participou_estudo"].astype(bool)]
+    analisavel = por_paciente[por_paciente["participou_estudo"].astype(bool)]
     fecal = analisavel[analisavel["n_coletas_pote_entregue"] > 0]
     apenas_lamina = analisavel[analisavel["n_coletas_pote_entregue"] == 0]
 
     def pct(num, den):
         return round(100 * num / den, 1) if den else 0.0
 
-    cat_counts = por_crianca["categoria_amostragem"].value_counts().reindex(
+    cat_counts = por_paciente["categoria_amostragem"].value_counts().reindex(
         ["Fezes e lâmina", "Apenas fezes (sem lâmina)", "Apenas lâmina (sem fezes)", "Nenhum material"],
         fill_value=0,
     )
 
-    # ---- prevalências: só entram no denominador crianças com resultado CONCLUSIVO
+    # ---- prevalências: só entram no denominador pacientes com resultado CONCLUSIVO
     # (positivo ou negativo) no domínio relevante — "inconclusivo" (amostra
     # insuficiente / sem resultado) é reportado à parte, não vira negativo.
     fecal_conclusivo = fecal[fecal["fecal_status"].isin(["positivo", "negativo"])]
@@ -835,7 +840,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     # tipicamente) são baixos demais para qualquer teste ter poder estatístico
     # relevante. Mantido como contagem bruta descritiva.
 
-    # ---- comparação de métodos — denominador = crianças com status CONCLUSIVO
+    # ---- comparação de métodos — denominador = pacientes com status CONCLUSIVO
     # naquele método específico (exclui quem só teve "amostra insuficiente" nesse
     # método, mesmo que tenha entregue material). Itera só sobre os métodos
     # ATIVOS nesta planilha.
@@ -848,17 +853,17 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         metodos_rows.append({
             "metodo": nome_m,
             "amostra_biologica": "Lâmina" if dominio == "lamina" else "Pote de fezes",
-            "n_criancas_testaveis": len(conclusivos),
-            "n_criancas_positivas": positivos,
-            "n_criancas_inconclusivas": len(inconclusivos),
+            "n_pacientes_testaveis": len(conclusivos),
+            "n_pacientes_positivas": positivos,
+            "n_pacientes_inconclusivas": len(inconclusivos),
             "prevalencia": pct(positivos, len(conclusivos)),
         })
     metodos_resumo = pd.DataFrame(metodos_rows) if metodos_rows else pd.DataFrame(columns=[
-        "metodo", "amostra_biologica", "n_criancas_testaveis", "n_criancas_positivas",
-        "n_criancas_inconclusivas", "prevalencia",
+        "metodo", "amostra_biologica", "n_pacientes_testaveis", "n_pacientes_positivas",
+        "n_pacientes_inconclusivas", "prevalencia",
     ])
     if not metodos_resumo.empty:
-        ic_inf, ic_sup = _wilson_ci_pairs(metodos_resumo["n_criancas_positivas"], metodos_resumo["n_criancas_testaveis"])
+        ic_inf, ic_sup = _wilson_ci_pairs(metodos_resumo["n_pacientes_positivas"], metodos_resumo["n_pacientes_testaveis"])
         metodos_resumo["ic95_inf"] = ic_inf
         metodos_resumo["ic95_sup"] = ic_sup
     else:
@@ -889,7 +894,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     metodo_especie_resumo = pd.DataFrame(metodo_especie_rows) if metodo_especie_rows else \
         pd.DataFrame(columns=["metodo", "especie", "n", "prevalencia", "categoria"])
     if not metodo_especie_resumo.empty:
-        den_by_metodo = dict(zip(metodos_resumo["metodo"], metodos_resumo["n_criancas_testaveis"]))
+        den_by_metodo = dict(zip(metodos_resumo["metodo"], metodos_resumo["n_pacientes_testaveis"]))
         dens = [den_by_metodo.get(m, 0) for m in metodo_especie_resumo["metodo"]]
         ic_inf, ic_sup = _wilson_ci_pairs(metodo_especie_resumo["n"], dens)
         metodo_especie_resumo["ic95_inf"] = ic_inf
@@ -908,11 +913,11 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     # denominador próprio do(s) método(s) que a encontraram.
     #
     # IMPORTANTE: quando uma mesma espécie é encontrada em métodos de domínios
-    # diferentes, apresentar uma linha por domínio faria a mesma criança ser
-    # contada separadamente em cada linha, inflando a impressão de nº de casos.
+    # diferentes, apresentar uma linha por domínio faria o mesmo paciente ser
+    # contado separadamente em cada linha, inflando a impressão de nº de casos.
     # Por isso, espécies que aparecem em mais de um domínio são reportadas numa
     # ÚNICA linha "Fecal + Lâmina", com denominador e numerador calculados por
-    # CRIANÇA (união dos métodos relevantes) — uma criança positiva em qualquer
+    # PACIENTE (união dos métodos relevantes) — um paciente positivo em qualquer
     # um desses métodos conta uma vez só, mesmo que tenha sido detectada em mais
     # de um.
     #
@@ -943,7 +948,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     # metodo_especie_resumo, calculada com o denominador correto do método que
     # de fato a detectou.
     lamina_conclusivos_n = int(
-        metodos_resumo.loc[metodos_resumo["metodo"].isin(lamina_nomes_ativos), "n_criancas_testaveis"].max()
+        metodos_resumo.loc[metodos_resumo["metodo"].isin(lamina_nomes_ativos), "n_pacientes_testaveis"].max()
     ) if (not metodos_resumo.empty and lamina_nomes_ativos and
           metodos_resumo["metodo"].isin(lamina_nomes_ativos).any()) else 0
 
@@ -980,14 +985,14 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             nome_m for _, nome_m, _, _ in active_methods
             if nome_m in metodos_by_especie.get(especie, "").split(" + ")
         ]
-        status_cols = [f"status_{m}" for m in metodos_desta_especie if f"status_{m}" in por_crianca.columns]
-        especies_cols = [f"especies_{m}" for m in metodos_desta_especie if f"especies_{m}" in por_crianca.columns]
-        conclusivo_mask = pd.Series(False, index=por_crianca.index)
-        positivo_mask = pd.Series(False, index=por_crianca.index)
+        status_cols = [f"status_{m}" for m in metodos_desta_especie if f"status_{m}" in por_paciente.columns]
+        especies_cols = [f"especies_{m}" for m in metodos_desta_especie if f"especies_{m}" in por_paciente.columns]
+        conclusivo_mask = pd.Series(False, index=por_paciente.index)
+        positivo_mask = pd.Series(False, index=por_paciente.index)
         for sc in status_cols:
-            conclusivo_mask = conclusivo_mask | por_crianca[sc].isin(["positivo", "negativo"])
+            conclusivo_mask = conclusivo_mask | por_paciente[sc].isin(["positivo", "negativo"])
         for ec in especies_cols:
-            positivo_mask = positivo_mask | por_crianca[ec].apply(lambda lst: especie in lst)
+            positivo_mask = positivo_mask | por_paciente[ec].apply(lambda lst: especie in lst)
         base_n = int(conclusivo_mask.sum())
         n = int(positivo_mask.sum())
         categoria = "Patogênico" if especie in PATOGENICOS else ("Comensal" if especie in COMENSAIS else "Não classificado")
@@ -1020,21 +1025,21 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         n_pos = int(g["positivo_fecal"].sum())
         efeito_rows.append({
             "n_potes_entregues": int(n_pote),
-            "n_criancas": len(g),
+            "n_pacientes": len(g),
             "n_positivos": n_pos,
             "prevalencia": pct(n_pos, len(g)),
         })
     efeito_n_coletas = pd.DataFrame(efeito_rows).sort_values("n_potes_entregues").reset_index(drop=True) \
-        if efeito_rows else pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "n_positivos", "prevalencia"])
+        if efeito_rows else pd.DataFrame(columns=["n_potes_entregues", "n_pacientes", "n_positivos", "prevalencia"])
 
     fecal_cumulativa = build_fecal_cumulative_curve(df, fecal_methods_ativos)
 
     # ---- testes de hipótese ----
-    mcnemar_hpj_willis_res = mcnemar_hpj_willis(por_crianca)
+    mcnemar_hpj_willis_res = mcnemar_hpj_willis(por_paciente)
     cochran_armitage_res = cochran_armitage_trend(efeito_n_coletas)
 
     return {
-        "por_crianca": por_crianca,
+        "por_paciente": por_paciente,
         "total": total,
         "analisavel": analisavel,
         "fecal": fecal,
