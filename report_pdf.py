@@ -150,7 +150,7 @@ def _chart_ncoletas(efeito_df):
     if efeito_df.empty:
         return None
     fig, ax = plt.subplots(figsize=(6.2, 3))
-    labels = [f"{int(r.n_potes_entregues)} pote(s)\nn={int(r.n_criancas)}" for r in efeito_df.itertuples()]
+    labels = [f"{int(r.n_potes_entregues)} pote(s)\nn={int(r.n_pacientes)}" for r in efeito_df.itertuples()]
     ax.bar(labels, efeito_df["prevalencia"], color=MPL_TEAL_DARK)
     ax.set_ylabel("Prevalência (%)")
     # mesmo racional do _chart_metodos: eixo fixo evita estouro do bbox quando
@@ -210,9 +210,9 @@ def _stat_table(metrics):
             f"IC95% {_ic_texto(metrics['prev_combinada_ic95_inf'], metrics['prev_combinada_ic95_sup'])}",
         ],
         [
-            f"{int(metrics['fecal_conclusivo']['positivo_fecal'].sum())} de {len(metrics['fecal_conclusivo'])} crianças (conclusivas)",
-            f"{int(metrics['lamina_only_conclusivo']['positivo_lamina'].sum())} de {len(metrics['lamina_only_conclusivo'])} crianças (conclusivas)",
-            f"{int(metrics['combinada_base']['positivo_algum_metodo'].sum())} de {len(metrics['combinada_base'])} crianças (conclusivas)",
+            f"{int(metrics['fecal_conclusivo']['positivo_fecal'].sum())} de {len(metrics['fecal_conclusivo'])} pacientes (conclusivas)",
+            f"{int(metrics['lamina_only_conclusivo']['positivo_lamina'].sum())} de {len(metrics['lamina_only_conclusivo'])} pacientes (conclusivas)",
+            f"{int(metrics['combinada_base']['positivo_algum_metodo'].sum())} de {len(metrics['combinada_base'])} pacientes (conclusivas)",
         ],
     ]
     t = Table(data, colWidths=[56 * mm, 56 * mm, 56 * mm])
@@ -325,7 +325,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph(
-        f"{metrics['total']} crianças cadastradas &middot; {len(metrics['fecal'])} com amostra fecal "
+        f"{metrics['total']} pacientes cadastrados &middot; {len(metrics['fecal'])} com amostra fecal "
         f"entregue &middot; {len(metrics['apenas_lamina'])} só com lâmina &middot; métodos "
         f"analisados: {', '.join(metodos_ativos_nomes) if metodos_ativos_nomes else '—'}.",
         styles["body"],
@@ -342,9 +342,9 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
             f"<b>Amostras inconclusivas:</b> {len(metrics['fecal_inconclusivo'])} criança(s) com "
             "pote de fezes entregue tiveram todos os métodos fecais marcados como \"Amostra "
             "insuficiente\" (ou sem resultado registrado)"
-            + (f"; {len(metrics['lamina_only_inconclusivo'])} criança(s) na mesma situação só com "
+            + (f"; {len(metrics['lamina_only_inconclusivo'])} paciente(s) na mesma situação só com "
                "lâmina" if len(metrics['lamina_only_inconclusivo']) else "")
-            + ". Essas crianças foram excluídas dos denominadores de prevalência — não contam "
+            + ". Esses pacientes foram excluídoss dos denominadores de prevalência — não contam "
               "como negativas."
         )
         story.append(Paragraph(note_inc, styles["note"]))
@@ -352,17 +352,17 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
 
     if len(metrics["apenas_lamina"]) > 0:
         note = (
-            f"<b>Atenção:</b> {len(metrics['apenas_lamina'])} criança(s) só entregaram a lâmina, nunca "
-            "o pote de fezes — para elas, apenas o(s) método(s) de lâmina pôde(puderam) ser "
+            f"<b>Atenção:</b> {len(metrics['apenas_lamina'])} paciente(s) só entregaram a lâmina, nunca "
+            "o pote de fezes — para eles, apenas o(s) método(s) de lâmina pôde(puderam) ser "
             "pesquisado(s). A prevalência principal do estudo considera só quem teve amostra fecal "
             "analisada; o subgrupo de só-lâmina é reportado à parte."
         )
         story.append(Paragraph(note, styles["note"]))
 
     # ---- profundidade de amostragem ----
-    story.append(Paragraph("Crianças por profundidade de amostragem", styles["h2"]))
-    cat_df = metrics["cat_counts"].rename("n_criancas").to_frame()
-    cat_df["%"] = (100 * cat_df["n_criancas"] / metrics["total"]).round(1)
+    story.append(Paragraph("Pacientes por profundidade de amostragem", styles["h2"]))
+    cat_df = metrics["cat_counts"].rename("n_pacientes").to_frame()
+    cat_df["%"] = (100 * cat_df["n_pacientes"] / metrics["total"]).round(1)
     cat_df = cat_df.reset_index().rename(columns={"index": "categoria_amostragem", "categoria_amostragem": "Categoria"})
     cat_df.columns = ["Categoria", "Nº crianças", "%"]
     story.append(_df_table(cat_df, col_widths=[80 * mm, 35 * mm, 25 * mm]))
@@ -393,7 +393,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(Paragraph("Prevalência por método diagnóstico e espécie", styles["h2"]))
     story.append(Paragraph(
         "Cada valor é a prevalência (%) daquela espécie especificamente pelo método indicado; "
-        "denominador = crianças com resultado conclusivo naquele método. Uma mesma espécie pode "
+        "denominador = pacientes com resultado conclusivo naquele método. Uma mesma espécie pode "
         "aparecer em mais de um método fecal. Colunas mostram só os métodos presentes nesta "
         "planilha.",
         styles["small"],
@@ -428,7 +428,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
         "Cada espécie encontrada por algum método fecal presente nesta planilha, especificamente — "
         "inclusive Enterobius vermicularis, se algum caso tiver sido identificado incidentalmente "
         "num método fecal (achado válido, não erro de digitação). A prevalência combinada dessa "
-        "espécie com métodos de lâmina, sem contar a mesma criança duas vezes, está no gráfico "
+        "espécie com métodos de lâmina, sem contar o mesmo paciente duas vezes, está no gráfico "
         "unificado acima.",
         styles["small"],
     ))
@@ -456,7 +456,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- comparação de métodos ----
     story.append(Paragraph("Comparação entre métodos diagnósticos", styles["h2"]))
     story.append(Paragraph(
-        "Denominador = crianças com resultado conclusivo naquele método específico (exclui "
+        "Denominador = pacientes com resultado conclusivo naquele método específico (exclui "
         "\"Amostra insuficiente\"). Lista os métodos efetivamente presentes nesta planilha.",
         styles["small"],
     ))
@@ -466,8 +466,8 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
         story.append(met_img)
         story.append(Spacer(1, 2 * mm))
     met_table = _with_ic_column(metrics["metodos_resumo"]).rename(columns={
-        "metodo": "Método", "amostra_biologica": "Amostra", "n_criancas_testaveis": "Testáveis",
-        "n_criancas_positivas": "Positivas", "n_criancas_inconclusivas": "Inconclusivas",
+        "metodo": "Método", "amostra_biologica": "Amostra", "n_pacientes_testaveis": "Testáveis",
+        "n_pacientes_positivas": "Positivas", "n_pacientes_inconclusivas": "Inconclusivas",
         "prevalencia": "Prevalência %", "ic95": "IC 95%",
     })
     story.append(_df_table(met_table, col_widths=[24 * mm, 20 * mm, 16 * mm, 16 * mm, 18 * mm, 20 * mm, 22 * mm]))
@@ -480,7 +480,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     mc = metrics["mcnemar_hpj_willis"]
     if mc["n_pareado"] == 0 or mc["tabela"] is None:
         story.append(Paragraph(
-            "Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente (ou um dos dois "
+            "Sem pacientes com resultado conclusivo em HPJ e Willis simultaneamente (ou um dos dois "
             "métodos não está presente nesta planilha) — teste não calculado.",
             styles["body"],
         ))
@@ -488,7 +488,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
         tb = mc["tabela"]
         story.append(Paragraph(
             "Compara os dois métodos aplicados à mesma amostra de fezes da mesma criança (dados "
-            "pareados), usando só as crianças em que os dois métodos discordaram entre si.",
+            "pareados), usando só os pacientes em que os dois métodos discordaram entre si.",
             styles["small"],
         ))
         story.append(Spacer(1, 1.5 * mm))
@@ -534,9 +534,9 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- curva cumulativa ----
     if not metrics["fecal_cumulativa"].empty:
         story.append(Paragraph("Ganho marginal por amostra — curva cumulativa", styles["h2"]))
-        n_grupo = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
+        n_grupo = int(metrics["fecal_cumulativa"]["n_pacientes"].iloc[0])
         story.append(Paragraph(
-            f"Mesmo grupo de {n_grupo} criança(s) que entregou o número máximo de potes "
+            f"Mesmo grupo de {n_grupo} paciente(s) que entregou o número máximo de potes "
             "observado no estudo, medida repetida (1ª, 1ª+2ª ... coletas). Sem viés de comparar "
             "subgrupos diferentes de crianças.",
             styles["small"],
@@ -547,22 +547,22 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
             story.append(cum_img)
 
     # ---- base por criança ----
-    story.append(Paragraph("Base por criança", styles["h2"]))
+    story.append(Paragraph("Base por paciente", styles["h2"]))
     story.append(Paragraph(
         "Tabela completa disponível no arquivo Excel exportado junto com este PDF; abaixo, uma "
         "amostra das primeiras linhas.",
         styles["body"],
     ))
     story.append(Spacer(1, 2 * mm))
-    child_cols = ["id_paciente", "nome_crianca", "categoria_amostragem", "especies_str"]
-    child_df = metrics["por_crianca"][child_cols].sort_values("id_paciente").rename(columns={
-        "id_paciente": "ID", "nome_crianca": "Nome", "categoria_amostragem": "Amostragem", "especies_str": "Espécies",
+    child_cols = ["id_paciente", "nome_paciente", "categoria_amostragem", "especies_str"]
+    child_df = metrics["por_paciente"][child_cols].sort_values("id_paciente").rename(columns={
+        "id_paciente": "ID", "nome_paciente": "Nome", "categoria_amostragem": "Amostragem", "especies_str": "Espécies",
     })
     story.append(_df_table(child_df, col_widths=[22 * mm, 42 * mm, 42 * mm, 54 * mm], max_rows=30))
     if len(child_df) > 30:
         story.append(Spacer(1, 2 * mm))
         story.append(Paragraph(
-            f"… e mais {len(child_df) - 30} crianças. Veja a lista completa no Excel exportado.",
+            f"… e mais {len(child_df) - 30} pacientes. Veja a lista completa no Excel exportado.",
             styles["small"],
         ))
 
@@ -570,10 +570,10 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(HRFlowable(width="100%", thickness=0.8, color=LINE))
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph(
-        "Nota metodológica: a prevalência é calculada por criança, não por exame — uma criança conta "
+        "Nota metodológica: a prevalência é calculada por paciente, não por exame — uma criança conta "
         "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de "
         "fezes alimenta os métodos de domínio fecal; a lâmina alimenta exclusivamente os métodos de "
-        "domínio lâmina/swab. Crianças cujos únicos resultados foram \"Amostra insuficiente\" são "
+        "domínio lâmina/swab. Pacientes cujos únicos resultados foram \"Amostra insuficiente\" são "
         "reportadas à parte como inconclusivas e não entram nos denominadores de prevalência. Esta "
         f"planilha trouxe os seguintes métodos: {', '.join(metodos_ativos_nomes) if metodos_ativos_nomes else '—'}.",
         styles["small"],
