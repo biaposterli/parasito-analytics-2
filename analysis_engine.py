@@ -42,6 +42,17 @@ Correções mantidas da v1 -> v2:
      comensal): como a diferenciação morfológica entre E. histolytica (patogênica) e
      E. dispar (comensal) não é possível no laboratório, todo achado desse complexo
      precisa ser tratado clinicamente como potencialmente patogênico.
+
+Alterações da v3 -> v4:
+  8) Catálogo de métodos ampliado e DESACOPLADO da planilha: METHOD_CATALOG agora
+     lista os métodos coproparasitológicos reconhecidos pelo sistema (HPJ, Willis,
+     Baermann-Picanço, Faust, Kato-Katz, MIFC/Blagg, Ritchie — domínio fecal — e
+     Graham — domínio lâmina). A cada upload, get_active_methods(df) filtra esse
+     catálogo pelas colunas metodo_* que realmente existem na planilha enviada — a
+     planilha não precisa mais trazer todos os métodos, nem precisa trazer só os
+     quatro originais. Todo o pipeline (build_per_child, compute_metrics,
+     metodos_resumo, metodo_especie_resumo, todos_parasitos_resumo, McNemar) passou
+     a operar sobre essa lista ativa, não mais sobre uma constante fixa.
 """
 import math
 import re
@@ -78,22 +89,56 @@ COMENSAIS = {"Endolimax nana", "Iodamoeba butschlii"}
 NEGATIVE_TOKENS = {"-", "negativo", "neg"}
 INSUFFICIENT_TOKENS = {"amostra insuficiente", "insuficiente"}
 
-# (coluna, nome do método, coluna de status que rege esse método, domínio biológico)
-METHOD_COLUMNS = [
+# ----------------------------------------------------------------------
+# Catálogo de métodos reconhecidos pelo sistema (coluna, nome de exibição,
+# coluna de status que rege esse método, domínio biológico). Este é o
+# universo POSSÍVEL de métodos — não significa que uma planilha específica
+# traga todos eles. Use get_active_methods(df) para saber quais desses estão
+# de fato presentes numa planilha enviada.
+#
+# Domínio "fecal"  -> depende de status_amostra (pote de fezes)
+# Domínio "lamina" -> depende de status_lamina (fita/swab)
+# ----------------------------------------------------------------------
+METHOD_CATALOG = [
     ("metodo_graham", "Graham", "status_lamina", "lamina"),
-    ("metodo_baermann_picanco", "Baermann-Picanço", "status_amostra", "fecal"),
     ("metodo_hpj", "HPJ", "status_amostra", "fecal"),
     ("metodo_willis", "Willis", "status_amostra", "fecal"),
+    ("metodo_baermann_picanco", "Baermann-Picanço", "status_amostra", "fecal"),
+    ("metodo_faust", "Faust", "status_amostra", "fecal"),
+    ("metodo_kato_katz", "Kato-Katz", "status_amostra", "fecal"),
+    ("metodo_mifc", "MIFC (Blagg)", "status_amostra", "fecal"),
+    ("metodo_ritchie", "Ritchie (formol-éter)", "status_amostra", "fecal"),
 ]
-FECAL_METHODS = [m for m in METHOD_COLUMNS if m[3] == "fecal"]
-LAMINA_METHODS = [m for m in METHOD_COLUMNS if m[3] == "lamina"]
 
-REQUIRED_COLUMNS = [
-    "id_paciente", "coleta", "nome_crianca", "status_amostra", "status_lamina",
-    "metodo_graham", "metodo_baermann_picanco", "metodo_hpj", "metodo_willis",
-]
+# Mantido por compatibilidade com código/planilhas antigas que só conheciam
+# estes quatro métodos — não use para decidir o que processar; use
+# get_active_methods(df) para isso.
+METHOD_COLUMNS = METHOD_CATALOG
+
+REQUIRED_COLUMNS = ["id_paciente", "coleta", "nome_crianca"]
 
 ORDEM_COLETA = {"P1": 1, "P2": 2, "P3": 3}
+
+
+def get_active_methods(df: pd.DataFrame):
+    """Filtra METHOD_CATALOG pelas colunas metodo_* que existem de fato na
+    planilha enviada (após normalize_columns). A ordem do catálogo é
+    preservada, então a ordem de exibição (gráficos, tabelas, pivots) fica
+    estável entre planilhas diferentes.
+
+    Isso é o que permite que uma planilha traga só HPJ+Willis+Graham, outra
+    traga HPJ+Willis+Faust+Kato-Katz, e ambas sejam lidas corretamente —
+    sem exigir todas as colunas do catálogo nem travar quando alguma falta.
+    """
+    return [m for m in METHOD_CATALOG if m[0] in df.columns]
+
+
+def active_fecal_methods(active_methods):
+    return [m for m in active_methods if m[3] == "fecal"]
+
+
+def active_lamina_methods(active_methods):
+    return [m for m in active_methods if m[3] == "lamina"]
 
 
 def norm_text(x):
@@ -174,10 +219,42 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def validate_columns(df: pd.DataFrame):
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        return [f"Colunas ausentes: {', '.join(missing)}. Baixe o modelo novamente e confira os cabeçalhos."]
-    return []
+    """Valida a planilha enviada. Diferente da v3, NÃO exige mais que todas as
+    colunas de método do catálogo estejam presentes — só exige:
+      1) as colunas-base (id_paciente, coleta, nome_crianca);
+      2) pelo menos UM método reconhecido (metodo_*) na planilha;
+      3) a coluna de status do domínio correspondente a cada método ativo
+         (status_amostra se algum método fecal está presente; status_lamina
+         se o Graham, ou outro método de lâmina, está presente).
+    """
+    errors = []
+    missing_base = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing_base:
+        errors.append(
+            f"Colunas ausentes: {', '.join(missing_base)}. Baixe o modelo novamente e confira os cabeçalhos."
+        )
+
+    active = get_active_methods(df)
+    if not active:
+        known = ", ".join(nome for _, nome, _, _ in METHOD_CATALOG)
+        errors.append(
+            "Nenhuma coluna de método reconhecida foi encontrada na planilha "
+            f"(procurei por: {known}). Confira se os cabeçalhos de método seguem o "
+            "padrão 'metodo_<nome>' do modelo."
+        )
+    else:
+        domains_present = {m[3] for m in active}
+        if "fecal" in domains_present and "status_amostra" not in df.columns:
+            errors.append(
+                "A planilha tem método(s) de amostra fecal, mas falta a coluna "
+                "'status_amostra' (status de entrega do pote de fezes)."
+            )
+        if "lamina" in domains_present and "status_lamina" not in df.columns:
+            errors.append(
+                "A planilha tem método(s) de lâmina/swab, mas falta a coluna "
+                "'status_lamina' (status de entrega da lâmina)."
+            )
+    return errors
 
 
 # ======================================================================
@@ -252,6 +329,10 @@ def mcnemar_hpj_willis(por_crianca: pd.DataFrame) -> dict:
     Base: crianças com resultado CONCLUSIVO (positivo ou negativo, nunca
     "amostra insuficiente"/inconclusivo) em AMBOS os métodos — interseção,
     não união, para manter o pareamento válido.
+
+    Só é calculado se a planilha enviada tinha os dois métodos (HPJ e
+    Willis) — caso contrário as colunas status_HPJ/status_Willis nem
+    existem em por_crianca, e a função retorna n_pareado=0 abaixo.
 
     Tabela 2x2 (contagens de crianças):
                          Willis +      Willis -
@@ -403,7 +484,19 @@ def cochran_armitage_trend(grupos: pd.DataFrame) -> dict:
     }
 
 
-def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
+def build_per_child(df: pd.DataFrame, active_methods=None) -> pd.DataFrame:
+    """Constrói a base por criança.
+
+    active_methods: lista de tuplas (col, nome, status_key, dominio) — os
+    métodos que de fato existem nesta planilha, tipicamente
+    get_active_methods(df). Se None, é recalculada a partir de df (aceita
+    tanto planilhas com todos os métodos do catálogo quanto planilhas com
+    só um subconjunto).
+    """
+    if active_methods is None:
+        active_methods = get_active_methods(df)
+    fecal_methods = active_fecal_methods(active_methods)
+
     df = df.copy()
     rows = []
     for id_paciente, g in df.groupby(df["id_paciente"].apply(norm_text), dropna=True):
@@ -421,11 +514,11 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
         lamina_instances = []
 
         # tentativas por método individual (para metodos_resumo, sem viés de inconclusivo)
-        instances_por_metodo = {nome_m: [] for _, nome_m, _, _ in METHOD_COLUMNS}
-        positivo_metodo = {nome_m: False for _, nome_m, _, _ in METHOD_COLUMNS}
+        instances_por_metodo = {nome_m: [] for _, nome_m, _, _ in active_methods}
+        positivo_metodo = {nome_m: False for _, nome_m, _, _ in active_methods}
         # espécies encontradas especificamente por cada método (para o cruzamento
         # espécie x método na tabela "todos os parasitos")
-        especies_por_metodo = {nome_m: set() for _, nome_m, _, _ in METHOD_COLUMNS}
+        especies_por_metodo = {nome_m: set() for _, nome_m, _, _ in active_methods}
 
         for _, row in g.iterrows():
             status_amostra = std_status(row.get("status_amostra"))
@@ -435,7 +528,7 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
             if status_lamina == "Entregue":
                 n_lamina += 1
 
-            for col, nome_m, status_key, dominio in METHOD_COLUMNS:
+            for col, nome_m, status_key, dominio in active_methods:
                 status = status_amostra if status_key == "status_amostra" else status_lamina
                 if status != "Entregue":
                     continue  # método não tentado nesta coleta
@@ -474,7 +567,7 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
         positivo_fecal = fecal_status == "positivo"
         positivo_lamina = lamina_status == "positivo"
 
-        rows.append({
+        row_out = {
             "id_paciente": id_paciente,
             "nome_crianca": nome,
             "n_coletas_registradas": len(g),
@@ -501,48 +594,59 @@ def build_per_child(df: pd.DataFrame) -> pd.DataFrame:
             "n_especies_distintas_fecais": len(especies_fecais),
             "poliparasitado_fecal": len(especies_fecais) > 1,
 
-            "positivo_Graham": positivo_metodo["Graham"],
-            "positivo_Baermann-Picanço": positivo_metodo["Baermann-Picanço"],
-            "positivo_HPJ": positivo_metodo["HPJ"],
-            "positivo_Willis": positivo_metodo["Willis"],
-            "status_Graham": status_metodo["Graham"],
-            "status_Baermann-Picanço": status_metodo["Baermann-Picanço"],
-            "status_HPJ": status_metodo["HPJ"],
-            "status_Willis": status_metodo["Willis"],
-
-            "especies_Graham": sorted(especies_por_metodo["Graham"]),
-            "especies_Baermann-Picanço": sorted(especies_por_metodo["Baermann-Picanço"]),
-            "especies_HPJ": sorted(especies_por_metodo["HPJ"]),
-            "especies_Willis": sorted(especies_por_metodo["Willis"]),
-
             "tem_patogenico": any(e in PATOGENICOS for e in especies_total),
             "tem_comensal": any(e in COMENSAIS for e in especies_total),
-        })
+        }
+
+        # Colunas por-método, geradas dinamicamente para cada método ATIVO nesta
+        # planilha (em vez de nomes fixos tipo "status_HPJ" hardcoded) — é isso
+        # que permite ler planilhas com qualquer subconjunto do catálogo de
+        # métodos, incluindo métodos novos (Faust, Kato-Katz, MIFC, Ritchie...)
+        # sem precisar tocar neste código de novo.
+        for _, nome_m, _, _ in active_methods:
+            row_out[f"positivo_{nome_m}"] = positivo_metodo[nome_m]
+            row_out[f"status_{nome_m}"] = status_metodo[nome_m]
+            row_out[f"especies_{nome_m}"] = sorted(especies_por_metodo[nome_m])
+
+        rows.append(row_out)
+
+    base_cols = [
+        "id_paciente", "nome_crianca", "n_coletas_registradas",
+        "n_coletas_pote_entregue", "n_coletas_lamina_entregue", "categoria_amostragem",
+        "participou_estudo", "fecal_status", "lamina_status", "positivo_fecal",
+        "positivo_lamina", "positivo_algum_metodo", "especies_fecais", "especies_fecais_str",
+        "especies_lamina", "especies_lamina_str", "especies", "especies_str",
+        "n_especies_distintas_fecais", "poliparasitado_fecal",
+        "tem_patogenico", "tem_comensal",
+    ]
+    metodo_cols = []
+    for _, nome_m, _, _ in active_methods:
+        metodo_cols += [f"positivo_{nome_m}", f"status_{nome_m}", f"especies_{nome_m}"]
+
     if not rows:
         # planilha sem nenhuma linha de dado válido (ou sem id_paciente preenchido):
-        # devolve DataFrame vazio mas com as colunas certas, para não quebrar o
-        # restante do pipeline (compute_metrics acessa essas colunas diretamente).
-        return pd.DataFrame(columns=[
-            "id_paciente", "nome_crianca", "n_coletas_registradas",
-            "n_coletas_pote_entregue", "n_coletas_lamina_entregue", "categoria_amostragem",
-            "participou_estudo", "fecal_status", "lamina_status", "positivo_fecal",
-            "positivo_lamina", "positivo_algum_metodo", "especies_fecais", "especies_fecais_str",
-            "especies_lamina", "especies_lamina_str", "especies", "especies_str",
-            "n_especies_distintas_fecais", "poliparasitado_fecal",
-            "positivo_Graham", "positivo_Baermann-Picanço", "positivo_HPJ", "positivo_Willis",
-            "status_Graham", "status_Baermann-Picanço", "status_HPJ", "status_Willis",
-            "especies_Graham", "especies_Baermann-Picanço", "especies_HPJ", "especies_Willis",
-            "tem_patogenico", "tem_comensal",
-        ])
+        # devolve DataFrame vazio mas com as colunas certas (incluindo as colunas
+        # por-método dos métodos ativos), para não quebrar o restante do pipeline
+        # (compute_metrics acessa essas colunas diretamente).
+        return pd.DataFrame(columns=base_cols + metodo_cols)
     return pd.DataFrame(rows)
 
 
-def build_fecal_cumulative_curve(df: pd.DataFrame) -> pd.DataFrame:
+def build_fecal_cumulative_curve(df: pd.DataFrame, fecal_methods=None) -> pd.DataFrame:
     """Curva de positividade cumulativa por nº de potes considerados, medida na MESMA
     grupo de crianças (as que entregaram o número máximo de potes observado no
     estudo) — evita o viés de selecionar subgrupos diferentes de crianças por nº de
     potes entregues (quem entrega mais pode diferir sistematicamente de quem entrega
-    menos)."""
+    menos).
+
+    fecal_methods: lista de tuplas (col, nome, status_key, dominio) restrita ao
+    domínio fecal — tipicamente active_fecal_methods(get_active_methods(df)).
+    Qualquer método fecal presente na planilha (HPJ, Willis, Baermann-Picanço,
+    Faust, Kato-Katz, MIFC, Ritchie...) conta para "positivo_instance" abaixo.
+    """
+    if fecal_methods is None:
+        fecal_methods = active_fecal_methods(get_active_methods(df))
+
     df = df.copy()
     records = []  # (id_paciente, rank_coleta, positivo_na_coleta)
     for id_paciente, g in df.groupby(df["id_paciente"].apply(norm_text), dropna=True):
@@ -557,7 +661,7 @@ def build_fecal_cumulative_curve(df: pd.DataFrame) -> pd.DataFrame:
             if rank is None:
                 continue
             positivo_instance = False
-            for col, nome_m, status_key, dominio in FECAL_METHODS:
+            for col, nome_m, status_key, dominio in fecal_methods:
                 _, _, positive = parse_result_cell(row.get(col))
                 if positive:
                     positivo_instance = True
@@ -585,11 +689,12 @@ def build_fecal_cumulative_curve(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out_rows)
 
 
-def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
+def _empty_metrics(por_crianca: pd.DataFrame, active_methods=None) -> dict:
     """Estrutura de retorno usada quando não há nenhuma criança identificada
     (planilha vazia ou sem id_paciente preenchido). Evita quebrar o pipeline em
     DataFrames com 0 linhas, onde o pandas cria colunas com dtype 'object' e a
     indexação booleana perde as colunas."""
+    active_methods = active_methods or []
     empty_cat = pd.Series([0, 0, 0, 0], index=[
         "Fezes e lâmina", "Apenas fezes (sem lâmina)", "Apenas lâmina (sem fezes)", "Nenhum material",
     ])
@@ -638,14 +743,19 @@ def _empty_metrics(por_crianca: pd.DataFrame) -> dict:
         "todos_parasitos_resumo": empty_todos_parasitos,
         "mcnemar_hpj_willis": mcnemar_hpj_willis(empty_child),
         "cochran_armitage_efeito_coletas": cochran_armitage_trend(empty_efeito),
+        "metodos_ativos": active_methods,
+        "metodos_ativos_nomes": [nome for _, nome, _, _ in active_methods],
     }
 
 
 def compute_metrics(df: pd.DataFrame) -> dict:
-    por_crianca = build_per_child(df)
+    active_methods = get_active_methods(df)
+    fecal_methods_ativos = active_fecal_methods(active_methods)
+
+    por_crianca = build_per_child(df, active_methods)
     total = len(por_crianca)
     if total == 0:
-        return _empty_metrics(por_crianca)
+        return _empty_metrics(por_crianca, active_methods)
 
     analisavel = por_crianca[por_crianca["participou_estudo"].astype(bool)]
     fecal = analisavel[analisavel["n_coletas_pote_entregue"] > 0]
@@ -688,9 +798,9 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         combinada_base["positivo_algum_metodo"].sum(), len(combinada_base)
     )
 
-    # ---- prevalência por espécie — só espécies de origem FECAL (HPJ/Willis/BP).
-    # Enterobius (Graham/lâmina) já é reportado, com denominador próprio e correto,
-    # em metodos_resumo.
+    # ---- prevalência por espécie — só espécies de origem FECAL (métodos fecais
+    # ativos nesta planilha). Enterobius (Graham/lâmina) já é reportado, com
+    # denominador próprio e correto, em metodos_resumo.
     especie_count = {}
     for especies in fecal_conclusivo["especies_fecais"]:
         for e in especies:
@@ -727,9 +837,10 @@ def compute_metrics(df: pd.DataFrame) -> dict:
 
     # ---- comparação de métodos — denominador = crianças com status CONCLUSIVO
     # naquele método específico (exclui quem só teve "amostra insuficiente" nesse
-    # método, mesmo que tenha entregue material).
+    # método, mesmo que tenha entregue material). Itera só sobre os métodos
+    # ATIVOS nesta planilha.
     metodos_rows = []
-    for col, nome_m, status_key, dominio in METHOD_COLUMNS:
+    for col, nome_m, status_key, dominio in active_methods:
         status_col = f"status_{nome_m}"
         conclusivos = analisavel[analisavel[status_col].isin(["positivo", "negativo"])]
         inconclusivos = analisavel[analisavel[status_col] == "inconclusivo"]
@@ -742,17 +853,24 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             "n_criancas_inconclusivas": len(inconclusivos),
             "prevalencia": pct(positivos, len(conclusivos)),
         })
-    metodos_resumo = pd.DataFrame(metodos_rows)
-    ic_inf, ic_sup = _wilson_ci_pairs(metodos_resumo["n_criancas_positivas"], metodos_resumo["n_criancas_testaveis"])
-    metodos_resumo["ic95_inf"] = ic_inf
-    metodos_resumo["ic95_sup"] = ic_sup
+    metodos_resumo = pd.DataFrame(metodos_rows) if metodos_rows else pd.DataFrame(columns=[
+        "metodo", "amostra_biologica", "n_criancas_testaveis", "n_criancas_positivas",
+        "n_criancas_inconclusivas", "prevalencia",
+    ])
+    if not metodos_resumo.empty:
+        ic_inf, ic_sup = _wilson_ci_pairs(metodos_resumo["n_criancas_positivas"], metodos_resumo["n_criancas_testaveis"])
+        metodos_resumo["ic95_inf"] = ic_inf
+        metodos_resumo["ic95_sup"] = ic_sup
+    else:
+        metodos_resumo["ic95_inf"] = pd.Series(dtype=float)
+        metodos_resumo["ic95_sup"] = pd.Series(dtype=float)
 
-    # ---- prevalência por espécie x método — para cada método, denominador =
+    # ---- prevalência por espécie x método — para cada método ATIVO, denominador =
     # crianças com resultado conclusivo NAQUELE método (mesma base de
     # metodos_resumo), contando quantas foram positivas para cada espécie
     # especificamente através desse método.
     metodo_especie_rows = []
-    for col, nome_m, status_key, dominio in METHOD_COLUMNS:
+    for col, nome_m, status_key, dominio in active_methods:
         status_col = f"status_{nome_m}"
         especies_col = f"especies_{nome_m}"
         conclusivos = analisavel[analisavel[status_col].isin(["positivo", "negativo"])]
@@ -780,25 +898,28 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         metodo_especie_resumo["ic95_inf"] = pd.Series(dtype=float)
         metodo_especie_resumo["ic95_sup"] = pd.Series(dtype=float)
 
-    # ---- prevalência de TODOS os parasitos (fecais + Graham/lâmina), unificada
-    # numa só tabela, indicando por qual(is) método(s) cada espécie foi detectada.
-    # Espécies fecais usam o denominador combinado (fecal_conclusivo, já que os 3
-    # métodos fecais alimentam a mesma prevalência por criança); Enterobius
-    # vermicularis, tipicamente diagnosticado pelo Graham mas ocasionalmente
-    # também visualizado num método fecal (achado incidental, igualmente válido
-    # — não é erro de digitação), usa o denominador próprio do(s) método(s) que
-    # a encontraram.
+    # ---- prevalência de TODOS os parasitos (fecais + lâmina), unificada numa só
+    # tabela, indicando por qual(is) método(s) cada espécie foi detectada.
+    # Espécies fecais usam o denominador combinado (fecal_conclusivo, já que todos
+    # os métodos fecais ativos alimentam a mesma prevalência por criança);
+    # Enterobius vermicularis, tipicamente diagnosticado por um método de lâmina
+    # (Graham) mas ocasionalmente também visualizado num método fecal (achado
+    # incidental, igualmente válido — não é erro de digitação), usa o
+    # denominador próprio do(s) método(s) que a encontraram.
     #
     # IMPORTANTE: quando uma mesma espécie é encontrada em métodos de domínios
-    # diferentes (ex.: Enterobius no Graham de uma criança E no Willis de
-    # outra — ou, pior, da MESMA criança em coletas diferentes), apresentar uma
-    # linha por domínio faria a mesma criança ser contada separadamente em cada
-    # linha, inflando a impressão de nº de casos. Por isso, espécies que
-    # aparecem em mais de um domínio são reportadas numa ÚNICA linha
-    # "Fecal + Lâmina", com denominador e numerador calculados por CRIANÇA
-    # (união dos métodos relevantes) — uma criança positiva em qualquer um
-    # desses métodos conta uma vez só, mesmo que tenha sido detectada em mais
+    # diferentes, apresentar uma linha por domínio faria a mesma criança ser
+    # contada separadamente em cada linha, inflando a impressão de nº de casos.
+    # Por isso, espécies que aparecem em mais de um domínio são reportadas numa
+    # ÚNICA linha "Fecal + Lâmina", com denominador e numerador calculados por
+    # CRIANÇA (união dos métodos relevantes) — uma criança positiva em qualquer
+    # um desses métodos conta uma vez só, mesmo que tenha sido detectada em mais
     # de um.
+    #
+    # Se esta planilha não tem NENHUM método de domínio lâmina ativo (ex.: só
+    # métodos fecais foram enviados), este bloco simplesmente não encontra
+    # nenhuma espécie de lâmina e todas as linhas saem como "Fecal" — sem
+    # necessidade de tratamento especial.
     metodos_by_especie = {}
     if not metodo_especie_resumo.empty:
         metodos_by_especie = (
@@ -807,15 +928,26 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             .to_dict()
         )
 
+    lamina_methods_ativos = active_lamina_methods(active_methods)
+    lamina_nomes_ativos = {nome for _, nome, _, _ in lamina_methods_ativos}
+
     especies_fecais_todas = set(especies_resumo["especie"]) if not especies_resumo.empty else set()
-    graham_especies = metodo_especie_resumo[metodo_especie_resumo["metodo"] == "Graham"] \
-        if not metodo_especie_resumo.empty else pd.DataFrame(columns=metodo_especie_resumo.columns)
-    especies_lamina_todas = set(graham_especies["especie"]) if not graham_especies.empty else set()
+    lamina_especies_df = metodo_especie_resumo[metodo_especie_resumo["metodo"].isin(lamina_nomes_ativos)] \
+        if (not metodo_especie_resumo.empty and lamina_nomes_ativos) else pd.DataFrame(columns=metodo_especie_resumo.columns)
+    especies_lamina_todas = set(lamina_especies_df["especie"]) if not lamina_especies_df.empty else set()
     especies_multi_dominio = especies_fecais_todas & especies_lamina_todas
 
-    graham_conclusivos_n = int(
-        metodos_resumo.loc[metodos_resumo["metodo"] == "Graham", "n_criancas_testaveis"].iloc[0]
-    ) if not metodos_resumo.empty else 0
+    # base_n de lâmina: se houver mais de um método de lâmina ativo (raro hoje,
+    # mas o catálogo permite), usa o maior denominador entre eles como
+    # referência de exibição; a prevalência por espécie já vem de
+    # metodo_especie_resumo, calculada com o denominador correto do método que
+    # de fato a detectou.
+    lamina_conclusivos_n = int(
+        metodos_resumo.loc[metodos_resumo["metodo"].isin(lamina_nomes_ativos), "n_criancas_testaveis"].max()
+    ) if (not metodos_resumo.empty and lamina_nomes_ativos and
+          metodos_resumo["metodo"].isin(lamina_nomes_ativos).any()) else 0
+
+    lamina_label = " / ".join(sorted(lamina_nomes_ativos)) if lamina_nomes_ativos else "Lâmina"
 
     todos_rows = []
     for _, r in especies_resumo.iterrows():
@@ -830,22 +962,22 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             "base_n": len(fecal_conclusivo),
             "metodos": metodos_by_especie.get(r["especie"], ""),
         })
-    for _, r in graham_especies.iterrows():
+    for _, r in lamina_especies_df.iterrows():
         if r["especie"] in especies_multi_dominio:
             continue
         todos_rows.append({
             "especie": r["especie"],
             "categoria": r["categoria"],
-            "dominio": "Lâmina (Graham)",
+            "dominio": f"Lâmina ({lamina_label})",
             "n": r["n"],
             "prevalencia": r["prevalencia"],
-            "base_n": graham_conclusivos_n,
-            "metodos": "Graham",
+            "base_n": lamina_conclusivos_n,
+            "metodos": r["metodo"],
         })
 
     for especie in especies_multi_dominio:
         metodos_desta_especie = [
-            nome_m for _, nome_m, _, _ in METHOD_COLUMNS
+            nome_m for _, nome_m, _, _ in active_methods
             if nome_m in metodos_by_especie.get(especie, "").split(" + ")
         ]
         status_cols = [f"status_{m}" for m in metodos_desta_especie if f"status_{m}" in por_crianca.columns]
@@ -879,10 +1011,10 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         todos_parasitos_resumo["ic95_inf"] = pd.Series(dtype=float)
         todos_parasitos_resumo["ic95_sup"] = pd.Series(dtype=float)
 
-    # ---- efeito do nº de potes — corrigido para usar só positividade FECAL
-    # (antes misturava achado de lâmina) e restrito a quem teve resultado fecal
-    # conclusivo. Mantém como leitura descritiva rápida; ver também
-    # fecal_cumulativa para a versão sem viés de seleção entre subgrupos.
+    # ---- efeito do nº de potes — usa só positividade FECAL (qualquer método
+    # fecal ativo) e restrito a quem teve resultado fecal conclusivo. Mantém
+    # como leitura descritiva rápida; ver também fecal_cumulativa para a versão
+    # sem viés de seleção entre subgrupos.
     efeito_rows = []
     for n_pote, g in fecal_conclusivo.groupby("n_coletas_pote_entregue"):
         n_pos = int(g["positivo_fecal"].sum())
@@ -895,7 +1027,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     efeito_n_coletas = pd.DataFrame(efeito_rows).sort_values("n_potes_entregues").reset_index(drop=True) \
         if efeito_rows else pd.DataFrame(columns=["n_potes_entregues", "n_criancas", "n_positivos", "prevalencia"])
 
-    fecal_cumulativa = build_fecal_cumulative_curve(df)
+    fecal_cumulativa = build_fecal_cumulative_curve(df, fecal_methods_ativos)
 
     # ---- testes de hipótese ----
     mcnemar_hpj_willis_res = mcnemar_hpj_willis(por_crianca)
@@ -933,4 +1065,6 @@ def compute_metrics(df: pd.DataFrame) -> dict:
         "todos_parasitos_resumo": todos_parasitos_resumo,
         "mcnemar_hpj_willis": mcnemar_hpj_willis_res,
         "cochran_armitage_efeito_coletas": cochran_armitage_res,
+        "metodos_ativos": active_methods,
+        "metodos_ativos_nomes": [nome for _, nome, _, _ in active_methods],
     }
