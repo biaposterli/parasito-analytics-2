@@ -1,6 +1,6 @@
 """
 LaPaHV — Laboratório de Parasitologia Humana e Veterinária
-Análise epidemiológica de levantamentos de parasitoses intestinais em pré-escolares.
+Análise epidemiológica de levantamentos de parasitoses intestinais.
 
 Rodar localmente:
     pip install -r requirements.txt
@@ -316,7 +316,7 @@ def generate_template_bytes() -> bytes:
     metodo_cols_lamina = [col for col, _, _, dominio in METHOD_CATALOG if dominio == "lamina"]
 
     headers = (
-        ["id_paciente", "coleta", "nome_crianca", "nome_responsavel", "status_amostra", "status_lamina"]
+        ["id_paciente", "coleta", "nome_paciente", "nome_responsavel", "status_amostra", "status_lamina"]
         + metodo_cols_lamina
         + metodo_cols_fecal
         + ["observacoes"]
@@ -324,7 +324,7 @@ def generate_template_bytes() -> bytes:
 
     def _linha(id_paciente, coleta, status_amostra, status_lamina, valores_metodo, observacoes):
         row = {
-            "id_paciente": id_paciente, "coleta": coleta, "nome_crianca": "Exemplo Da Silva",
+            "id_paciente": id_paciente, "coleta": coleta, "nome_paciente": "Exemplo Da Silva",
             "nome_responsavel": "Nome Do Responsável", "status_amostra": status_amostra,
             "status_lamina": status_lamina, "observacoes": observacoes,
         }
@@ -351,9 +351,9 @@ def generate_template_bytes() -> bytes:
         "metodo_ritchie": "Resultado do Ritchie (formol-éter) — sedimentação por centrifugação.",
     }
     legenda_rows = [
-        ["id_paciente", "Código único da criança (repete nas linhas de P1/P2/P3)", "texto livre, ex.: F-001"],
+        ["id_paciente", "Código único do paciente (repete nas linhas de P1/P2/P3)", "texto livre, ex.: F-001"],
         ["coleta", "Qual das até 3 coletas essa linha representa", "P1, P2 ou P3"],
-        ["nome_crianca", "Nome da criança", "texto livre"],
+        ["nome_paciente", "Nome da criança", "texto livre"],
         ["nome_responsavel", "Nome do responsável (opcional)", "texto livre ou vazio"],
         ["status_amostra", "Status de entrega do POTE DE FEZES — usado pelos métodos fecais abaixo", "Entregue / Não entregue"],
         ["status_lamina", "Status de entrega da LÂMINA — usado pelo(s) método(s) de lâmina abaixo", "Entregue / Não entregue"],
@@ -460,10 +460,10 @@ st.markdown(
     """<div class="lapahv-hero">
     <span class="lapahv-eyebrow">Duas amostras, um relatório correto</span>
     <h2>Da planilha de campo ao relatório epidemiológico.</h2>
-    <p>Todo exame coproparasitológico infantil coleta dois materiais separados — e cada um segue
+    <p>Todo exame coproparasitológico coleta dois materiais separados — e cada um segue
     seu próprio caminho até o diagnóstico. Baixe o modelo, preencha os dados da sua pesquisa e
-    envie abaixo para receber a análise por criança, já respeitando qual método pôde de fato ser
-    feito em cada uma. A planilha pode trazer só os métodos que o seu laboratório realmente usa —
+    envie abaixo para receber a análise por paciente, já respeitando qual método pôde de fato ser
+    feito em cada um. A planilha pode trazer só os métodos que o seu laboratório realmente usa —
     o sistema detecta sozinho quais estão presentes.</p>
     </div>""",
     unsafe_allow_html=True,
@@ -557,10 +557,10 @@ if uploaded_file is not None:
         metodos_ativos_nomes = metrics.get("metodos_ativos_nomes", [])
 
         if metrics["total"] == 0:
-            st.error("Nenhuma criança identificada. Confira se a coluna **id_paciente** está preenchida.")
+            st.error("Nenhum paciente identificado. Confira se a coluna **id_paciente** está preenchida.")
         else:
             st.success(
-                f"Planilha processada: {metrics['total']} crianças, {len(df)} coletas. "
+                f"Planilha processada: {metrics['total']} pacientes, {len(df)} coletas. "
                 f"Métodos detectados: {', '.join(metodos_ativos_nomes)}. "
                 "Relatório gerado abaixo."
             )
@@ -569,7 +569,7 @@ if uploaded_file is not None:
                 st.markdown('<div class="lapahv-step-wrap">', unsafe_allow_html=True)
                 step_header(3, "Relatório da análise")
                 st.caption(
-                    f"{metrics['total']} crianças cadastradas · {len(metrics['fecal'])} com amostra "
+                    f"{metrics['total']} pacientes cadastrados · {len(metrics['fecal'])} com amostra "
                     f"fecal entregue · {len(metrics['apenas_lamina'])} só com lâmina · métodos: "
                     f"{', '.join(metodos_ativos_nomes)}."
                 )
@@ -580,7 +580,7 @@ if uploaded_file is not None:
                 )
 
                 tab_geral, tab_especies, tab_metodos, tab_base, tab_export = st.tabs(
-                    ["📊  Visão geral", "🦠  Espécies & parasitos", "🔬  Métodos & amostragem", "📋  Base por criança", "⬇  Exportar"]
+                    ["📊  Visão geral", "🦠  Espécies & parasitos", "🔬  Métodos & amostragem", "📋  Base por paciente", "⬇  Exportar"]
                 )
 
                 # ---------------------------------------------------------
@@ -591,17 +591,17 @@ if uploaded_file is not None:
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         st.metric("Prevalência — amostra fecal", f"{metrics['prev_fecal']:.1f}%",
-                                   help="Base: crianças com resultado CONCLUSIVO em pelo menos um método "
+                                   help="Base: pacientes com resultado CONCLUSIVO em pelo menos um método "
                                         "fecal presente nesta planilha. Achados exclusivos de métodos de "
                                         "lâmina não entram aqui — veja 'Espécies & parasitos' para a "
-                                        "prevalência de Enterobius. Crianças com todos os resultados "
-                                        "fecais marcados como 'Amostra insuficiente' são excluídas do "
-                                        "denominador (não contam como negativas). IC95% calculado pelo "
+                                        "prevalência de Enterobius. Pacientes com todos os resultados "
+                                        "fecais marcados como 'Amostra insuficiente' são excluídos do "
+                                        "denominador (não contam como negativos). IC95% calculado pelo "
                                         "método de Wilson.")
                         st.caption(format_ic(metrics["prev_fecal_ic95_inf"], metrics["prev_fecal_ic95_sup"]))
                     with c2:
                         st.metric("Prevalência — só lâmina", f"{metrics['prev_lamina']:.1f}%",
-                                   help="Base: crianças que só entregaram lâmina (nunca o pote de fezes) e "
+                                   help="Base: pacientes que só entregaram lâmina (nunca o pote de fezes) e "
                                         "tiveram resultado conclusivo no(s) método(s) de lâmina desta "
                                         "planilha. Reflete tipicamente Enterobius vermicularis — o único "
                                         "parasita pesquisável só com a lâmina. IC95% calculado pelo "
@@ -610,7 +610,7 @@ if uploaded_file is not None:
                         st.caption(format_ic(metrics["prev_lamina_ic95_inf"], metrics["prev_lamina_ic95_sup"]))
                     with c3:
                         st.metric("Prevalência combinada", f"{metrics['prev_combinada']:.1f}%",
-                                   help="Todas as crianças com pelo menos um resultado conclusivo, em "
+                                   help="Todos os pacientes com pelo menos um resultado conclusivo, em "
                                         "qualquer domínio (fezes e/ou lâmina) — use com cautela, mistura "
                                         "profundidades diagnósticas diferentes. IC95% calculado pelo "
                                         "método de Wilson.")
@@ -619,18 +619,18 @@ if uploaded_file is not None:
                     if n_inconclusivas > 0:
                         st.markdown(
                             f"""<div class="lapahv-note"><strong>Amostras inconclusivas:</strong>
-                            {len(metrics['fecal_inconclusivo'])} criança(s) entregaram pote de fezes mas
+                            {len(metrics['fecal_inconclusivo'])} paciente(s) entregaram pote de fezes mas
                             tiveram <em>todos</em> os métodos fecais marcados como "Amostra insuficiente"
-                            (ou sem resultado registrado){', ' + str(len(metrics['lamina_only_inconclusivo'])) + ' criança(s) na mesma situação só com lâmina' if len(metrics['lamina_only_inconclusivo']) else ''}.
-                            Essas crianças foram excluídas dos denominadores de prevalência acima — elas
-                            <u>não</u> contam como negativas, pois não houve diagnóstico conclusivo.</div>""",
+                            (ou sem resultado registrado){', ' + str(len(metrics['lamina_only_inconclusivo'])) + ' paciente(s) na mesma situação só com lâmina' if len(metrics['lamina_only_inconclusivo']) else ''}.
+                            Esses pacientes foram excluídos dos denominadores de prevalência acima — eles
+                            <u>não</u> contam como negativos, pois não houve diagnóstico conclusivo.</div>""",
                             unsafe_allow_html=True,
                         )
 
                     if len(metrics["apenas_lamina"]) > 0:
                         st.markdown(
                             f"""<div class="lapahv-note" style="margin-top:8px;"><strong>Atenção:</strong> {len(metrics['apenas_lamina'])}
-                            criança(s) só entregaram a lâmina, nunca o pote de fezes — para elas, apenas
+                            paciente(s) só entregaram a lâmina, nunca o pote de fezes — para eles, apenas
                             o(s) método(s) de lâmina desta planilha pôde(puderam) ser pesquisado(s). Por
                             isso a prevalência principal do estudo considera só quem teve amostra fecal
                             analisada; o subgrupo de só-lâmina é reportado à parte.</div>""",
@@ -638,9 +638,9 @@ if uploaded_file is not None:
                         )
 
                     st.write("")
-                    section_title("Crianças por profundidade de amostragem")
-                    cat_df = metrics["cat_counts"].rename("n_criancas").to_frame()
-                    cat_df["%"] = (100 * cat_df["n_criancas"] / metrics["total"]).round(1)
+                    section_title("Pacientes por profundidade de amostragem")
+                    cat_df = metrics["cat_counts"].rename("n_pacientes").to_frame()
+                    cat_df["%"] = (100 * cat_df["n_pacientes"] / metrics["total"]).round(1)
                     st.dataframe(cat_df, width='stretch')
 
                 # ---------------------------------------------------------
@@ -656,7 +656,7 @@ if uploaded_file is not None:
                         "encontrada em métodos de domínios diferentes (ex.: Enterobius vermicularis, "
                         "tipicamente por um método de lâmina, mas ocasionalmente também visível num "
                         "método fecal), ela aparece numa única linha \"Fecal + Lâmina\" — o cálculo é "
-                        "feito por criança, então quem foi detectado por mais de um método conta uma "
+                        "feito por paciente, então quem foi detectado por mais de um método conta uma "
                         "vez só, não duas.",
                     )
                     colT, colU = st.columns([3, 2])
@@ -687,7 +687,7 @@ if uploaded_file is not None:
                     subsection_title(
                         "Prevalência por método diagnóstico e espécie",
                         "Cada célula mostra a prevalência (%) daquela espécie especificamente pelo "
-                        "método indicado, com denominador = crianças com resultado conclusivo NAQUELE "
+                        "método indicado, com denominador = pacientes com resultado conclusivo NAQUELE "
                         "método. Uma mesma espécie pode aparecer em mais de um método fecal (ex.: um "
                         "ovo de helminto pode ser visto tanto no HPJ quanto no Willis). Colunas mostram "
                         "só os métodos presentes nesta planilha.",
@@ -713,7 +713,7 @@ if uploaded_file is not None:
                         "algum método fecal presente nesta planilha, especificamente — inclusive "
                         "Enterobius vermicularis, se algum caso tiver sido identificado incidentalmente "
                         "num método fecal (achado válido, não é erro). A prevalência combinada dessa "
-                        "espécie com métodos de lâmina, sem contar a mesma criança duas vezes, está no "
+                        "espécie com métodos de lâmina, sem contar o mesmo paciente duas vezes, está no "
                         "gráfico unificado acima.",
                     )
                     colA, colB = st.columns([3, 2])
@@ -764,7 +764,7 @@ if uploaded_file is not None:
                 with tab_metodos:
                     section_title(
                         "Comparação entre métodos diagnósticos",
-                        "Denominador = crianças com resultado conclusivo naquele método específico "
+                        "Denominador = pacientes com resultado conclusivo naquele método específico "
                         "(exclui quem teve só 'Amostra insuficiente' nesse método). Lista só os "
                         "métodos presentes nesta planilha.",
                     )
@@ -783,8 +783,8 @@ if uploaded_file is not None:
                     with colF:
                         met_display = with_ic_column(metrics["metodos_resumo"]).rename(columns={
                             "metodo": "Método", "amostra_biologica": "Amostra",
-                            "n_criancas_testaveis": "Testáveis", "n_criancas_positivas": "Positivas",
-                            "n_criancas_inconclusivas": "Inconclusivas", "prevalencia": "Prevalência %",
+                            "n_pacientes_testaveis": "Testáveis", "n_pacientes_positivas": "Positivas",
+                            "n_pacientes_inconclusivas": "Inconclusivas", "prevalencia": "Prevalência %",
                         })
                         st.dataframe(met_display, width='stretch', hide_index=True)
                         st.caption("IC95% pelo método de Wilson.")
@@ -794,12 +794,12 @@ if uploaded_file is not None:
                         "HPJ x Willis — teste de McNemar",
                         "Compara os dois métodos aplicados à MESMA amostra de fezes da mesma criança "
                         "(dados pareados) — testa se um método detecta mais positivos que o outro, "
-                        "usando só as crianças em que os dois métodos discordaram entre si. Só "
+                        "usando só os pacientes em que os dois métodos discordaram entre si. Só "
                         "calculado quando a planilha traz os dois métodos.",
                     )
                     mc = metrics["mcnemar_hpj_willis"]
                     if mc["n_pareado"] == 0 or mc["tabela"] is None:
-                        st.info("Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente "
+                        st.info("Sem pacientes com resultado conclusivo em HPJ e Willis simultaneamente "
                                 "(ou um dos dois métodos não está presente nesta planilha) — teste não "
                                 "calculado.")
                     else:
@@ -831,15 +831,15 @@ if uploaded_file is not None:
                     section_title(
                         "Efeito do número de potes de fezes entregues",
                         "Usa somente positividade fecal (qualquer método fecal presente na "
-                        "planilha). Compara SUBGRUPOS diferentes de crianças (quem entregou 1, 2 ou 3 "
+                        "planilha). Compara SUBGRUPOS diferentes de pacientes (quem entregou 1, 2 ou 3 "
                         "potes), o que pode ter viés de seleção — veja a curva cumulativa abaixo, "
-                        "calculada no mesmo grupo de crianças, para uma estimativa sem esse viés.",
+                        "calculada no mesmo grupo de pacientes, para uma estimativa sem esse viés.",
                     )
                     if not metrics["efeito_n_coletas"].empty:
                         fig4 = px.bar(
                             metrics["efeito_n_coletas"], x="n_potes_entregues", y="prevalencia",
                             labels={"prevalencia": "Prevalência (%)", "n_potes_entregues": "Nº de potes entregues"},
-                            text="n_criancas",
+                            text="n_pacientes",
                         )
                         fig4.update_traces(marker_color=TEAL_DARK, texttemplate="n=%{text}", textposition="outside")
                         fig4.update_layout(**PLOTLY_LAYOUT)
@@ -859,13 +859,13 @@ if uploaded_file is not None:
                     st.write("")
                     section_title("Ganho marginal por amostra — curva cumulativa")
                     if not metrics["fecal_cumulativa"].empty:
-                        n_grupo = int(metrics["fecal_cumulativa"]["n_criancas"].iloc[0])
+                        n_grupo = int(metrics["fecal_cumulativa"]["n_pacientes"].iloc[0])
                         k_max = int(metrics["fecal_cumulativa"]["k"].max())
                         st.caption(
-                            f"Mesmo grupo de {n_grupo} criança(s) que entregou o número máximo de potes "
+                            f"Mesmo grupo de {n_grupo} paciente(s) que entregou o número máximo de potes "
                             f"observado no estudo ({k_max}), medindo quantas ficariam positivas se o "
                             "laboratório parasse na 1ª, 2ª ... até a última coleta. Como é a mesma "
-                            "criança sendo acompanhada (medida repetida), este gráfico não sofre o viés "
+                            "paciente sendo acompanhado (medida repetida), este gráfico não sofre o viés "
                             "de comparar subgrupos diferentes de crianças."
                         )
                         fig5 = px.line(
@@ -876,7 +876,7 @@ if uploaded_file is not None:
                         fig5.update_layout(**PLOTLY_LAYOUT)
                         st.plotly_chart(fig5, width='stretch')
                     else:
-                        st.info("Dados insuficientes para a curva cumulativa (nenhuma criança com coletas identificadas por P1/P2/P3).")
+                        st.info("Dados insuficientes para a curva cumulativa (nenhum paciente com coletas identificadas por P1/P2/P3).")
 
                 # ---------------------------------------------------------
                 # ABA 4 — BASE POR CRIANÇA
@@ -884,13 +884,13 @@ if uploaded_file is not None:
                 with tab_base:
                     section_title("Base completa por criança")
                     display_cols = [
-                        "id_paciente", "nome_crianca", "categoria_amostragem",
+                        "id_paciente", "nome_paciente", "categoria_amostragem",
                         "n_coletas_pote_entregue", "n_coletas_lamina_entregue",
                         "fecal_status", "lamina_status",
                         "positivo_algum_metodo", "especies_str",
                     ]
                     st.dataframe(
-                        metrics["por_crianca"][display_cols].sort_values("id_paciente"),
+                        metrics["por_paciente"][display_cols].sort_values("id_paciente"),
                         width='stretch', hide_index=True, height=460,
                     )
 
@@ -904,26 +904,26 @@ if uploaded_file is not None:
                         f"especies_{nome}" for nome in metodo_nomes
                     ]
                     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                        m["por_crianca"].drop(columns=[c for c in list_cols if c in m["por_crianca"].columns]).to_excel(
+                        m["por_paciente"].drop(columns=[c for c in list_cols if c in m["por_paciente"].columns]).to_excel(
                             writer, sheet_name="Base_por_Crianca", index=False
                         )
                         m["cat_counts"].rename("n").to_frame().to_excel(writer, sheet_name="Categoria_Amostragem")
                         pd.DataFrame([
                             {"metrica": "Prevalência — amostra fecal (conclusiva)", "valor_pct": m["prev_fecal"],
                              "ic95_inf": m["prev_fecal_ic95_inf"], "ic95_sup": m["prev_fecal_ic95_sup"],
-                             "n_criancas": len(m["fecal_conclusivo"])},
+                             "n_pacientes": len(m["fecal_conclusivo"])},
                             {"metrica": "Prevalência — só lâmina (conclusiva)", "valor_pct": m["prev_lamina"],
                              "ic95_inf": m["prev_lamina_ic95_inf"], "ic95_sup": m["prev_lamina_ic95_sup"],
-                             "n_criancas": len(m["lamina_only_conclusivo"])},
+                             "n_pacientes": len(m["lamina_only_conclusivo"])},
                             {"metrica": "Prevalência combinada (conclusiva)", "valor_pct": m["prev_combinada"],
                              "ic95_inf": m["prev_combinada_ic95_inf"], "ic95_sup": m["prev_combinada_ic95_sup"],
-                             "n_criancas": len(m["combinada_base"])},
+                             "n_pacientes": len(m["combinada_base"])},
                             {"metrica": "Inconclusivas — fezes (amostra insuficiente em tudo)", "valor_pct": None,
-                             "ic95_inf": None, "ic95_sup": None, "n_criancas": len(m["fecal_inconclusivo"])},
+                             "ic95_inf": None, "ic95_sup": None, "n_pacientes": len(m["fecal_inconclusivo"])},
                             {"metrica": "Inconclusivas — só lâmina", "valor_pct": None,
-                             "ic95_inf": None, "ic95_sup": None, "n_criancas": len(m["lamina_only_inconclusivo"])},
+                             "ic95_inf": None, "ic95_sup": None, "n_pacientes": len(m["lamina_only_inconclusivo"])},
                             {"metrica": "Métodos detectados nesta planilha", "valor_pct": None,
-                             "ic95_inf": None, "ic95_sup": None, "n_criancas": None,
+                             "ic95_inf": None, "ic95_sup": None, "n_pacientes": None,
                              },
                         ]).to_excel(writer, sheet_name="Prevalencia_Geral", index=False)
                         pd.DataFrame({"metodos_ativos": metodo_nomes}).to_excel(
@@ -992,7 +992,7 @@ if uploaded_file is not None:
 
 st.divider()
 st.caption(
-    "Nota metodológica: a prevalência é calculada por criança, não por exame — uma criança conta "
+    "Nota metodológica: a prevalência é calculada por paciente, não por exame — um paciente conta "
     "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de fezes "
     "alimenta os métodos de domínio fecal; a lâmina alimenta exclusivamente os métodos de domínio "
     "lâmina/swab. Crianças cujos únicos resultados foram 'Amostra insuficiente' são reportadas à "
