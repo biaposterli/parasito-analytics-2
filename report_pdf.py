@@ -86,16 +86,23 @@ def _chart_especies(especies_df):
 
 
 def _chart_todos_parasitos(todos_df):
-    """Gráfico unificado de prevalência por espécie (fecal + Graham/lâmina), com
+    """Gráfico unificado de prevalência por espécie (fecal + lâmina), com
     hachura indicando o domínio da amostra (fezes vs. lâmina) e cor indicando a
     categoria (patogênico/comensal)."""
     if todos_df.empty:
         return None
     df = todos_df.sort_values("prevalencia")
     colors_map = {"Patogênico": MPL_BRICK, "Comensal": MPL_AMBER, "Não classificado": MPL_SAGE}
-    hatch_map = {"Fecal": "", "Lâmina (Graham)": "///", "Fecal + Lâmina": "xx"}
+
+    def _hatch_for(dominio):
+        if dominio == "Fecal":
+            return ""
+        if dominio == "Fecal + Lâmina":
+            return "xx"
+        return "///"  # qualquer variante de "Lâmina (...)"
+
     bar_colors = [colors_map.get(c, MPL_SAGE) for c in df["categoria"]]
-    hatches = [hatch_map.get(d, "") for d in df["dominio"]]
+    hatches = [_hatch_for(d) for d in df["dominio"]]
     fig, ax = plt.subplots(figsize=(6.2, max(1.6, 0.42 * len(df))))
     bars = ax.barh(df["especie"], df["prevalencia"], color=bar_colors)
     for bar, h in zip(bars, hatches):
@@ -123,6 +130,8 @@ def _chart_poli(neg, mono, poli):
 
 
 def _chart_metodos(metodos_df):
+    if metodos_df.empty:
+        return None
     fig, ax = plt.subplots(figsize=(6.2, 3))
     ax.bar(metodos_df["metodo"], metodos_df["prevalencia"], color=MPL_TEAL)
     ax.set_ylabel("Prevalência (%)")
@@ -130,6 +139,7 @@ def _chart_metodos(metodos_df):
     # área visível quando TODAS as prevalências são 0% (domínio all-negative),
     # o que antes inflava desproporcionalmente a imagem via bbox_inches="tight"
     ax.set_ylim(0, 105)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=7.5)
     for i, v in enumerate(metodos_df["prevalencia"]):
         ax.text(i, v + 2, f"{v}%", ha="center", fontsize=8)
     fig.tight_layout()
@@ -285,6 +295,12 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     )
     story = []
 
+    # métodos efetivamente presentes nesta planilha — usado para montar tabelas/
+    # pivots dinamicamente, em vez de assumir sempre os quatro métodos originais.
+    metodos_ativos_nomes = metrics.get("metodos_ativos_nomes") or (
+        list(metrics["metodos_resumo"]["metodo"]) if not metrics["metodos_resumo"].empty else []
+    )
+
     # ---- cabeçalho ----
     header_cells = []
     if logo_path:
@@ -310,7 +326,8 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
 
     story.append(Paragraph(
         f"{metrics['total']} crianças cadastradas &middot; {len(metrics['fecal'])} com amostra fecal "
-        f"entregue &middot; {len(metrics['apenas_lamina'])} só com lâmina.",
+        f"entregue &middot; {len(metrics['apenas_lamina'])} só com lâmina &middot; métodos "
+        f"analisados: {', '.join(metodos_ativos_nomes) if metodos_ativos_nomes else '—'}.",
         styles["body"],
     ))
     story.append(Spacer(1, 4 * mm))
@@ -336,9 +353,9 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     if len(metrics["apenas_lamina"]) > 0:
         note = (
             f"<b>Atenção:</b> {len(metrics['apenas_lamina'])} criança(s) só entregaram a lâmina, nunca "
-            "o pote de fezes — para elas, apenas <i>Enterobius vermicularis</i> pôde ser pesquisado. "
-            "A prevalência principal do estudo considera só quem teve amostra fecal analisada; o "
-            "subgrupo de só-lâmina é reportado à parte."
+            "o pote de fezes — para elas, apenas o(s) método(s) de lâmina pôde(puderam) ser "
+            "pesquisado(s). A prevalência principal do estudo considera só quem teve amostra fecal "
+            "analisada; o subgrupo de só-lâmina é reportado à parte."
         )
         story.append(Paragraph(note, styles["note"]))
 
@@ -350,16 +367,15 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     cat_df.columns = ["Categoria", "Nº crianças", "%"]
     story.append(_df_table(cat_df, col_widths=[80 * mm, 35 * mm, 25 * mm]))
 
-    # ---- prevalência de todos os parasitos (fecal + Graham/lâmina, unificado) ----
+    # ---- prevalência de todos os parasitos (fecal + lâmina, unificado) ----
     story.append(Paragraph("Prevalência de todos os parasitos", styles["h2"]))
     story.append(Paragraph(
-        "Espécies fecais (HPJ/Willis/Baermann-Picanço) e achados de Graham/lâmina, reunidos num "
-        "só gráfico. As bases de cálculo diferem por domínio (ver coluna \"Base N\" na tabela "
-        "abaixo). Quando a mesma espécie foi encontrada em métodos de domínios diferentes (ex.: "
-        "Enterobius vermicularis, tipicamente pelo Graham, mas ocasionalmente também visível num "
-        "método fecal), ela aparece numa única linha \"Fecal + Lâmina\", com denominador e "
-        "numerador calculados por criança — quem foi detectado em mais de um método conta uma "
-        "vez só, não duas.",
+        "Espécies fecais e achados de lâmina, reunidos num só gráfico. As bases de cálculo diferem "
+        "por domínio (ver coluna \"Base N\" na tabela abaixo). Quando a mesma espécie foi encontrada "
+        "em métodos de domínios diferentes (ex.: Enterobius vermicularis, tipicamente por um método "
+        "de lâmina, mas ocasionalmente também visível num método fecal), ela aparece numa única "
+        "linha \"Fecal + Lâmina\", com denominador e numerador calculados por criança — quem foi "
+        "detectado em mais de um método conta uma vez só, não duas.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
@@ -378,17 +394,20 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(Paragraph(
         "Cada valor é a prevalência (%) daquela espécie especificamente pelo método indicado; "
         "denominador = crianças com resultado conclusivo naquele método. Uma mesma espécie pode "
-        "aparecer em mais de um método fecal.",
+        "aparecer em mais de um método fecal. Colunas mostram só os métodos presentes nesta "
+        "planilha.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
-    if not metrics["metodo_especie_resumo"].empty:
+    if not metrics["metodo_especie_resumo"].empty and metodos_ativos_nomes:
         pivot = metrics["metodo_especie_resumo"].pivot_table(
             index="especie", columns="metodo", values="prevalencia", aggfunc="first",
-        ).reindex(columns=["Graham", "HPJ", "Willis", "Baermann-Picanço"])
+        ).reindex(columns=metodos_ativos_nomes)
         pivot_df = pivot.reset_index().rename(columns={"especie": "Espécie"})
         pivot_df = pivot_df.fillna("—")
-        story.append(_df_table(pivot_df, col_widths=[50 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm]))
+        n_metodo_cols = len(metodos_ativos_nomes)
+        col_w = [50 * mm] + [max(18, 100 // max(n_metodo_cols, 1)) * mm] * n_metodo_cols
+        story.append(_df_table(pivot_df, col_widths=col_w))
         story.append(Spacer(1, 2 * mm))
         story.append(Paragraph(
             "Intervalos de confiança de 95% (Wilson) correspondentes a cada célula acima:",
@@ -406,10 +425,11 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     # ---- prevalência por espécie ----
     story.append(Paragraph("Prevalência por espécie — métodos fecais (base: fezes com resultado conclusivo)", styles["h2"]))
     story.append(Paragraph(
-        "Cada espécie encontrada por HPJ, Willis ou Baermann-Picanço, especificamente — inclusive "
-        "Enterobius vermicularis, se algum caso tiver sido identificado incidentalmente num método "
-        "fecal (achado válido, não erro de digitação). A prevalência combinada dessa espécie com o "
-        "Graham, sem contar a mesma criança duas vezes, está no gráfico unificado acima.",
+        "Cada espécie encontrada por algum método fecal presente nesta planilha, especificamente — "
+        "inclusive Enterobius vermicularis, se algum caso tiver sido identificado incidentalmente "
+        "num método fecal (achado válido, não erro de digitação). A prevalência combinada dessa "
+        "espécie com métodos de lâmina, sem contar a mesma criança duas vezes, está no gráfico "
+        "unificado acima.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
@@ -437,7 +457,7 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(Paragraph("Comparação entre métodos diagnósticos", styles["h2"]))
     story.append(Paragraph(
         "Denominador = crianças com resultado conclusivo naquele método específico (exclui "
-        "\"Amostra insuficiente\").",
+        "\"Amostra insuficiente\"). Lista os métodos efetivamente presentes nesta planilha.",
         styles["small"],
     ))
     story.append(Spacer(1, 1.5 * mm))
@@ -460,7 +480,8 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     mc = metrics["mcnemar_hpj_willis"]
     if mc["n_pareado"] == 0 or mc["tabela"] is None:
         story.append(Paragraph(
-            "Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente — teste não calculado.",
+            "Sem crianças com resultado conclusivo em HPJ e Willis simultaneamente (ou um dos dois "
+            "métodos não está presente nesta planilha) — teste não calculado.",
             styles["body"],
         ))
     else:
@@ -550,10 +571,11 @@ def build_pdf_report(metrics: dict, logo_path: str | None = None) -> bytes:
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph(
         "Nota metodológica: a prevalência é calculada por criança, não por exame — uma criança conta "
-        "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de fezes "
-        "alimenta os métodos HPJ, Willis e Baermann-Picanço; a lâmina alimenta exclusivamente o "
-        "método de Graham. Crianças cujos únicos resultados foram \"Amostra insuficiente\" são "
-        "reportadas à parte como inconclusivas e não entram nos denominadores de prevalência.",
+        "como positiva se qualquer uma de suas coletas (P1/P2/P3) revelou o parasita. O pote de "
+        "fezes alimenta os métodos de domínio fecal; a lâmina alimenta exclusivamente os métodos de "
+        "domínio lâmina/swab. Crianças cujos únicos resultados foram \"Amostra insuficiente\" são "
+        "reportadas à parte como inconclusivas e não entram nos denominadores de prevalência. Esta "
+        f"planilha trouxe os seguintes métodos: {', '.join(metodos_ativos_nomes) if metodos_ativos_nomes else '—'}.",
         styles["small"],
     ))
 
