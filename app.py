@@ -218,7 +218,12 @@ st.markdown(
         color: {TEAL_DARK} !important;
     }}
 
-    /* ----- buttons ----- */
+    /* ----- buttons -----
+       Reforço extra aqui: o texto do botão passa por [data-testid="stMarkdownContainer"]
+       internamente (mesmo elemento usado pelo texto solto da página), então sem uma
+       regra MAIS específica que essa, ele herdaria a cor escura das regras genéricas
+       acima e ficaria quase invisível sobre o fundo verde-escuro do botão. As regras
+       abaixo miram o texto e o ícone do botão diretamente, com prioridade máxima. */
     .stDownloadButton button, .stButton button {{
         background-color: {TEAL_DARK};
         color: white !important;
@@ -227,9 +232,28 @@ st.markdown(
         border-radius: 3px;
         font-size: 13px;
     }}
+    .stDownloadButton button p, .stButton button p,
+    .stDownloadButton button span, .stButton button span,
+    .stDownloadButton button div, .stButton button div,
+    .stDownloadButton button [data-testid="stMarkdownContainer"],
+    .stDownloadButton button [data-testid="stMarkdownContainer"] p,
+    .stButton button [data-testid="stMarkdownContainer"],
+    .stButton button [data-testid="stMarkdownContainer"] p {{
+        color: white !important;
+    }}
+    .stDownloadButton button svg, .stButton button svg {{
+        fill: white !important;
+        color: white !important;
+    }}
     .stDownloadButton button:hover, .stButton button:hover {{
         background-color: {TEAL};
         border-color: {TEAL};
+        color: white !important;
+    }}
+    .stDownloadButton button:hover p, .stButton button:hover p,
+    .stDownloadButton button:hover span, .stButton button:hover span,
+    .stDownloadButton button:hover [data-testid="stMarkdownContainer"] p,
+    .stButton button:hover [data-testid="stMarkdownContainer"] p {{
         color: white !important;
     }}
 
