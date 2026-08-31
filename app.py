@@ -72,32 +72,59 @@ st.markdown(
         font-family: 'Fraunces', serif !important;
         color: {TEAL_DARK} !important;
     }}
-    /* ----- reforço de contraste: texto solto dentro dos containers de marca -----
+    /* ----- reforço de contraste: TODO texto renderizado pelo Streamlit -----
        O Streamlit pode aplicar automaticamente um tema escuro conforme a
        preferência do sistema operacional/navegador do usuário. Nesse caso a
        cor de texto herdada da regra genérica acima (html, body, [class*="css"])
        pode ser sobrescrita por um texto claro, enquanto os fundos abaixo
        continuam claros (fixados manualmente) — resultando em texto invisível.
-       As regras abaixo forçam a cor de texto correta dentro de cada container
-       de marca, independente do tema do dispositivo. */
-    .lapahv-hero, .lapahv-hero p, .lapahv-hero li, .lapahv-hero span,
-    .lapahv-card, .lapahv-card p, .lapahv-card li, .lapahv-card span,
-    .lapahv-step-wrap, .lapahv-step-wrap p, .lapahv-step-wrap li, .lapahv-step-wrap span,
-    .lapahv-step-wrap div:not(.badge):not(.lapahv-eyebrow),
-    .lapahv-note, .lapahv-note strong, .lapahv-note em, .lapahv-note u {{
+
+       IMPORTANTE: st.markdown('<div class="lapahv-step-wrap">', ...) e o
+       st.write(...) / st.markdown('</div>', ...) que vêm depois são chamadas
+       SEPARADAS — cada uma gera seu próprio bloco no DOM, como elementos
+       IRMÃOS, não um dentro do outro. A div de marca não chega a "abraçar" de
+       fato o texto entre a abertura e o fechamento, então seletores do tipo
+       ".lapahv-step-wrap p" NÃO alcançam esse texto. Por isso as regras
+       abaixo miram diretamente os contêineres que o Streamlit usa para
+       QUALQUER texto (st.write, st.markdown, st.caption), não os nossos
+       contêineres de marca — funciona não importa como o HTML foi quebrado. */
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stMarkdownContainer"] small,
+    [data-testid="stMarkdownContainer"] strong,
+    [data-testid="stMarkdownContainer"] em,
+    [data-testid="stMarkdownContainer"] u,
+    [data-testid="stCaptionContainer"],
+    [data-testid="stCaptionContainer"] p,
+    [data-testid="stCaptionContainer"] small,
+    [data-testid="stText"] {{
+        color: {INK_SOFT} !important;
+    }}
+    /* títulos de marca (h2/h3 dentro de st.markdown com HTML de vários níveis
+       já têm cor própria acima; aqui garantimos que headings simples também
+       fiquem legíveis, sem depender do nível de aninhamento) */
+    [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stMarkdownContainer"] h4 {{
+        color: {TEAL_DARK} !important;
+    }}
+    /* elementos de marca com cor própria (sobrescrevem a regra genérica acima
+       por especificidade/ordem — mantidos explicitamente) */
+    .lapahv-hero p, .lapahv-card p, .lapahv-note {{
         color: {INK_SOFT} !important;
     }}
     .lapahv-topbar .name, .lapahv-section-title, .lapahv-section-subtitle,
     .lapahv-step .step-title {{
         color: {TEAL_DARK} !important;
     }}
-    .lapahv-section-caption, .lapahv-topbar .sub {{
+    .lapahv-section-caption, .lapahv-topbar .sub, .lapahv-card .kicker {{
         color: {INK_FAINT} !important;
     }}
-    /* markdown genérico dentro da sidebar (listas, legendas) */
-    section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] li,
-    section[data-testid="stSidebar"] span, section[data-testid="stSidebar"] label {{
-        color: {INK_SOFT} !important;
+    .lapahv-eyebrow {{
+        color: {TEAL} !important;
     }}
     /* ----- eyebrow / section labels ----- */
     .lapahv-eyebrow {{
