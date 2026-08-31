@@ -53,6 +53,26 @@ Alterações da v3 -> v4:
      quatro originais. Todo o pipeline (build_per_child, compute_metrics,
      metodos_resumo, metodo_especie_resumo, todos_parasitos_resumo, McNemar) passou
      a operar sobre essa lista ativa, não mais sobre uma constante fixa.
+
+Alterações da v4 -> v5:
+  9) Normalização de espécies abreviadas corrigida na raiz. Antes, o
+     reconhecimento de uma abreviação como "E. coli" dependia de bater
+     EXATAMENTE com uma das chaves cadastradas em PARASITE_MAP — então a
+     mesma espécie digitada com espaçamento diferente ("E.coli" sem espaço
+     vs. "E. coli" com espaço), inclusive dentro do MESMO método na mesma
+     planilha, virava duas "espécies" distintas no relatório (uma mapeada
+     corretamente, outra caindo no fallback genérico de capitalização). Uma
+     nova função normalize_species_token() normaliza só o ESPAÇAMENTO ao
+     redor do ponto da abreviação de gênero antes da consulta ao mapa (nunca
+     corrige ortografia nem adivinha espécie) — isso elimina a duplicação
+     sem exigir listar manualmente cada variação de espaçamento possível
+     para cada espécie do catálogo.
+ 10) Entamoeba coli (ameba comensal, não patogênica — morfologicamente
+     distinta de E. histolytica/dispar, que é tratada como potencialmente
+     patogênica por não poder ser diferenciada da E. dispar comensal no
+     laboratório) passa a ser reconhecida em PARASITE_MAP e classificada em
+     COMENSAIS. Antes, "E. coli" (e variantes) não estava no catálogo e
+     caía no fallback de capitalização, aparecendo como "Não classificado".
 """
 import math
 import re
@@ -78,6 +98,12 @@ PARASITE_MAP = {
     "i. butschlii": "Iodamoeba butschlii",
     "iodamoeba butschlii": "Iodamoeba butschlii",
     "iodamoeba": "Iodamoeba butschlii",
+    # Entamoeba coli — ameba comensal (não patogênica), morfologicamente
+    # distinta de E. histolytica/dispar. Ausente do catálogo até a v5, o que
+    # fazia toda ocorrência cair no fallback de capitalização ("Não
+    # classificado") em vez de ser reconhecida como espécie comensal.
+    "e. coli": "Entamoeba coli",
+    "entamoeba coli": "Entamoeba coli",
 }
 PATOGENICOS = {
     "Enterobius vermicularis",
@@ -85,7 +111,7 @@ PATOGENICOS = {
     "Balantidium coli",
     "Entamoeba histolytica/dispar",
 }
-COMENSAIS = {"Endolimax nana", "Iodamoeba butschlii"}
+COMENSAIS = {"Endolimax nana", "Iodamoeba butschlii", "Entamoeba coli"}
 NEGATIVE_TOKENS = {"-", "negativo", "neg"}
 INSUFFICIENT_TOKENS = {"amostra insuficiente", "insuficiente"}
 
@@ -119,6 +145,47 @@ REQUIRED_COLUMNS = ["id_paciente", "coleta", "nome_paciente"]
 
 ORDEM_COLETA = {"P1": 1, "P2": 2, "P3": 3}
 
+# Reconhece uma abreviação de gênero no início do token: uma letra, opcional
+# espaço, ponto, opcional espaço, resto do nome. Usado só para NORMALIZAR o
+# espaçamento antes da consulta a PARASITE_MAP — nunca para corrigir
+# ortografia nem para inferir espécie.
+_GENUS_ABBR_RE = re.compile(r"^([a-zà-ÿ])\s*\.\s*(.+)$", flags=re.IGNORECASE)
+
+
+def normalize_species_token(p: str) -> str:
+    """Normaliza o ESPAÇAMENTO de um token de espécie já em minúsculas e sem
+    espaços nas pontas, antes de consultar PARASITE_MAP.
+
+    Motivação: a mesma espécie pode ser digitada como "e.coli", "e. coli" ou
+    até "e .coli" — inclusive dentro do MESMO método, em linhas diferentes da
+    mesma planilha (visto em dados reais enviados). Sem essa normalização, só
+    UMA dessas grafias bate com a chave cadastrada em PARASITE_MAP; as
+    demais caem no fallback genérico (p.capitalize()) e viram uma "espécie"
+    própria — duplicando a mesma espécie real em duas linhas/barras
+    diferentes no relatório (ex.: "Giardia lamblia" e "G.lamblia" como
+    entradas separadas).
+
+    A função colapsa espaços internos múltiplos e força exatamente um
+    espaço entre o ponto da abreviação de gênero e o restante do nome
+    ("e.coli" / "e .coli" / "e.  coli" -> "e. coli"). Não altera nada além
+    disso — nomes já por extenso (ex. "giardia lamblia") passam só pelo
+    colapso de espaços múltiplos.
+    """
+    p = re.sub(r"\s+", " ", p.strip())
+    m = _GENUS_ABBR_RE.match(p)
+    if m:
+        p = f"{m.group(1).lower()}. {m.group(2).strip()}"
+    return p
+
+
+def norm_text(x):
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return None
+    if not isinstance(x, str):
+        return str(x)
+    t = " ".join(x.strip().split())
+    return t if t else None
+
 
 def get_active_methods(df: pd.DataFrame):
     """Filtra METHOD_CATALOG pelas colunas metodo_* que existem de fato na
@@ -139,15 +206,6 @@ def active_fecal_methods(active_methods):
 
 def active_lamina_methods(active_methods):
     return [m for m in active_methods if m[3] == "lamina"]
-
-
-def norm_text(x):
-    if x is None or (isinstance(x, float) and pd.isna(x)):
-        return None
-    if not isinstance(x, str):
-        return str(x)
-    t = " ".join(x.strip().split())
-    return t if t else None
 
 
 def std_status(x):
@@ -179,7 +237,8 @@ def parse_result_cell(raw):
         p = p.strip()
         if not p:
             continue
-        std = PARASITE_MAP.get(p, p.capitalize())
+        key = normalize_species_token(p)
+        std = PARASITE_MAP.get(key, key.capitalize())
         if std not in species:
             species.append(std)
     if not species:
