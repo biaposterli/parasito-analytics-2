@@ -72,15 +72,42 @@ st.markdown(
         font-family: 'Fraunces', serif !important;
         color: {TEAL_DARK} !important;
     }}
+    /* ----- reforço de contraste: texto solto dentro dos containers de marca -----
+       O Streamlit pode aplicar automaticamente um tema escuro conforme a
+       preferência do sistema operacional/navegador do usuário. Nesse caso a
+       cor de texto herdada da regra genérica acima (html, body, [class*="css"])
+       pode ser sobrescrita por um texto claro, enquanto os fundos abaixo
+       continuam claros (fixados manualmente) — resultando em texto invisível.
+       As regras abaixo forçam a cor de texto correta dentro de cada container
+       de marca, independente do tema do dispositivo. */
+    .lapahv-hero, .lapahv-hero p, .lapahv-hero li, .lapahv-hero span,
+    .lapahv-card, .lapahv-card p, .lapahv-card li, .lapahv-card span,
+    .lapahv-step-wrap, .lapahv-step-wrap p, .lapahv-step-wrap li, .lapahv-step-wrap span,
+    .lapahv-step-wrap div:not(.badge):not(.lapahv-eyebrow),
+    .lapahv-note, .lapahv-note strong, .lapahv-note em, .lapahv-note u {{
+        color: {INK_SOFT} !important;
+    }}
+    .lapahv-topbar .name, .lapahv-section-title, .lapahv-section-subtitle,
+    .lapahv-step .step-title {{
+        color: {TEAL_DARK} !important;
+    }}
+    .lapahv-section-caption, .lapahv-topbar .sub {{
+        color: {INK_FAINT} !important;
+    }}
+    /* markdown genérico dentro da sidebar (listas, legendas) */
+    section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] li,
+    section[data-testid="stSidebar"] span, section[data-testid="stSidebar"] label {{
+        color: {INK_SOFT} !important;
+    }}
     /* ----- eyebrow / section labels ----- */
     .lapahv-eyebrow {{
         font-family: 'IBM Plex Mono', monospace;
         font-size: 12.5px;
         letter-spacing: .06em;
         text-transform: uppercase;
-        color: {TEAL};
+        color: {TEAL} !important;
     }}
-    .lapahv-eyebrow.on-dark {{ color: {SAGE}; }}
+    .lapahv-eyebrow.on-dark {{ color: {SAGE} !important; }}
 
     /* ----- top brand bar ----- */
     .lapahv-topbar {{
@@ -124,7 +151,7 @@ st.markdown(
     }}
     .lapahv-card .kicker {{
         font-family:'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing:.05em;
-        text-transform:uppercase; color:{INK_FAINT}; margin-bottom: 8px; display:block;
+        text-transform:uppercase; color:{INK_FAINT} !important; margin-bottom: 8px; display:block;
     }}
 
     /* ----- step header (numbered badge + title) ----- */
@@ -134,7 +161,7 @@ st.markdown(
     .lapahv-step .badge {{
         flex: 0 0 auto;
         width: 34px; height: 34px; border-radius: 50%;
-        background: {TEAL_DARK}; color: white;
+        background: {TEAL_DARK}; color: white !important;
         font-family:'IBM Plex Mono', monospace; font-weight:600; font-size: 14px;
         display:flex; align-items:center; justify-content:center;
     }}
@@ -160,11 +187,14 @@ st.markdown(
         letter-spacing: .04em;
         color: {INK_FAINT} !important;
     }}
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{
+        color: {TEAL_DARK} !important;
+    }}
 
     /* ----- buttons ----- */
     .stDownloadButton button, .stButton button {{
         background-color: {TEAL_DARK};
-        color: white;
+        color: white !important;
         border: 1px solid {TEAL_DARK};
         font-family: 'IBM Plex Mono', monospace;
         border-radius: 3px;
@@ -173,7 +203,7 @@ st.markdown(
     .stDownloadButton button:hover, .stButton button:hover {{
         background-color: {TEAL};
         border-color: {TEAL};
-        color: white;
+        color: white !important;
     }}
 
     /* ----- tags ----- */
@@ -185,7 +215,7 @@ st.markdown(
     /* ----- notes ----- */
     .lapahv-note {{
         background: {BRICK_TINT}; border-left: 3px solid {BRICK};
-        padding: 12px 16px; font-size: 14px; color: {INK_SOFT}; border-radius: 3px;
+        padding: 12px 16px; font-size: 14px; color: {INK_SOFT} !important; border-radius: 3px;
     }}
 
     /* ----- section title inside report ----- */
@@ -198,7 +228,7 @@ st.markdown(
         font-size: 15.5px; margin: 2px 0 2px 0;
     }}
     .lapahv-section-caption {{
-        color:{INK_FAINT}; font-size: 12.5px; margin-bottom: 10px;
+        color:{INK_FAINT} !important; font-size: 12.5px; margin-bottom: 10px;
     }}
 
     /* ----- tabs (sectorized report) ----- */
@@ -211,7 +241,7 @@ st.markdown(
         font-size: 13px;
         text-transform: uppercase;
         letter-spacing: .03em;
-        color: {INK_FAINT};
+        color: {INK_FAINT} !important;
         padding: 10px 16px;
     }}
     .stTabs [aria-selected="true"] {{
@@ -225,7 +255,7 @@ st.markdown(
         display:inline-flex; align-items:center; gap:6px;
         font-family:'IBM Plex Mono', monospace; font-size: 11.5px;
         padding: 5px 10px; border-radius: 20px; border: 1px solid {LINE};
-        color: {INK_SOFT}; background: {SURFACE};
+        color: {INK_SOFT} !important; background: {SURFACE};
     }}
     .lapahv-pill .dot {{
         width:7px; height:7px; border-radius:50%; background:{TEAL};
